@@ -202,6 +202,8 @@ See the [synthetic investigation example](examples/structured-context.md) for a 
 
 ### Read a context brief from an OpenBot agent
 
+For durable checkpoints and reviewed publication through MCP, see the [OpenBot service runbook](openbot.md). Use this file helper to expose a brief from one fixed context document.
+
 Run this from the Recall checkout, or install Recall in the Python environment
 that runs it. Test with the synthetic context first:
 

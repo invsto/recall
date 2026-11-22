@@ -29,7 +29,9 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Run Python tests
-        run: python3 -m unittest -v
+        run: |
+          python3 -m pip install -e '.[openbot]'
+          python3 -m unittest -v
 
       - name: Compile Python module
         run: python3 -m py_compile recall.py
