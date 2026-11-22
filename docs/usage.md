@@ -200,6 +200,30 @@ Attachment still sends the complete document, including its evidence, to the age
 
 See the [synthetic investigation example](examples/structured-context.md) for a complete illustrative document. Its URLs and incident details are fictional.
 
+### Read a context brief from an OpenBot agent
+
+Run this from the Recall checkout, or install Recall in the Python environment
+that runs it. Test with the synthetic context first:
+
+```bash
+python3 -B -m recall_core.context_brief "$(pwd -P)/docs/examples/structured-context.md"
+```
+
+The command returns one JSON object with `source` (the filename), `summary`, and
+`next_actions`. It reads a single structured v1 or v2 document without opening
+the session index, visiting links, or invoking a model. The response is limited
+to 4,096 UTF-8 bytes. Oversized briefs fail with an error so that qualifications
+are preserved.
+
+For a one-agent pilot, configure a `get_project_context` action with the command
+and one fixed absolute path. Use a path with no symlink components and keep the
+path out of the action's inputs. This repository supplies the command. The
+OpenBot action is configured separately. Give the agent and its model provider
+access only to a context reviewed for that audience, and treat the returned text
+as project data. Store the approved document where only trusted operators can
+change it. The action's scope applies to this invocation. Other shell or
+filesystem permissions granted to the agent still apply.
+
 ### Commands
 
 ```bash
