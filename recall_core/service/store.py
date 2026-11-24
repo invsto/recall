@@ -1,4 +1,4 @@
-"""The isolated OpenBot store. Bot operations authorize inside their transaction."""
+"""The isolated service store. Principal operations authorize inside their transaction."""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -13,7 +13,7 @@ import stat
 import tempfile
 import time
 
-from .context_policy import validate_context
+from ..context_policy import validate_context
 
 
 APPLICATION_ID = 0x52434F42  # RCOB
@@ -100,6 +100,9 @@ MIGRATIONS = (
         PRIMARY KEY (project, kind, key)
     );
     """,
+    """
+    ALTER TABLE bots RENAME TO principals;
+    """,
 )
 
 
@@ -136,7 +139,7 @@ def new_private_file(path):
     """Stage a 0600 file next to its destination and publish it without overwriting."""
     if os.path.lexists(path):
         raise StoreError("conflict", "The destination already exists.")
-    with tempfile.NamedTemporaryFile(prefix=".recall-openbot-", dir=path.parent, delete=False) as file:
+    with tempfile.NamedTemporaryFile(prefix=".recall-service-", dir=path.parent, delete=False) as file:
         staged = Path(file.name)
     try:
         yield staged
@@ -150,7 +153,7 @@ def new_private_file(path):
         staged.unlink()
 
 
-class OpenBotStore:
+class ServiceStore:
     def __init__(self, path: Path):
         self.path = path.expanduser().absolute()
 
@@ -198,9 +201,9 @@ class OpenBotStore:
             if version == 0 and db.execute("SELECT 1 FROM sqlite_schema LIMIT 1").fetchone() is None:
                 return 0
         if app_id != APPLICATION_ID or not 0 < version <= len(MIGRATIONS):
-            raise StoreError("wrong_store", "Use a supported OpenBot database.")
+            raise StoreError("wrong_store", "Use a supported Recall service database.")
         if current and version != len(MIGRATIONS):
-            raise StoreError("schema_version", "Run recall openbot init to migrate the database.")
+            raise StoreError("schema_version", "Run recall service init to migrate the database.")
         return version
 
     def initialize(self, *, create=False):
@@ -213,6 +216,7 @@ class OpenBotStore:
                 pass
             else:
                 os.close(fd)
+        self._backup_before_migration()
         with self.transaction(write=True, check_schema=False) as db:
             current = self._check_schema(db, current=False)
             for version, migration in enumerate(MIGRATIONS[current:], start=current + 1):
@@ -222,16 +226,41 @@ class OpenBotStore:
                         db.execute(statement)
                 db.execute(f"PRAGMA application_id = {APPLICATION_ID}")
                 db.execute(f"PRAGMA user_version = {version}")
+            if db.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise StoreError("migration_failed", "Foreign-key check failed; the migration was rolled back.")
         return {"schema_version": len(MIGRATIONS)}
+
+    def _backup_before_migration(self):
+        if not self.path.exists():
+            return
+        source = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=3)
+        try:
+            app_id = source.execute("PRAGMA application_id").fetchone()[0]
+            version = source.execute("PRAGMA user_version").fetchone()[0]
+            if app_id != APPLICATION_ID or not 0 < version < len(MIGRATIONS):
+                return
+            backup = self.path.with_name(f"{self.path.name}.v{version}.bak")
+            try:
+                fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                raise StoreError("backup_exists", "A backup from an earlier migration exists; move it aside first.") from None
+            os.close(fd)
+            target = sqlite3.connect(backup)
+            try:
+                source.backup(target)
+            finally:
+                target.close()
+        finally:
+            source.close()
 
     def health(self):
         with self.transaction() as db:
-            db.execute("SELECT id FROM bots LIMIT 1").fetchone()
+            db.execute("SELECT id FROM principals LIMIT 1").fetchone()
         return {"status": "ok"}
 
     def _principal(self, db, digest):
         if digest is not None:
-            row = db.execute("SELECT id FROM bots WHERE credential = ?", (digest,)).fetchone()
+            row = db.execute("SELECT id FROM principals WHERE credential = ?", (digest,)).fetchone()
             if row is not None:
                 return row["id"]
         raise StoreError("unauthorized", "A current bot credential is required.")
@@ -247,15 +276,15 @@ class OpenBotStore:
         )
 
     def change_credential(self, bot, action):
-        token = None if action == "bot-revoke" else secrets.token_urlsafe(32)
+        token = None if action == "principal-revoke" else secrets.token_urlsafe(32)
         digest = credential_digest(token) if token else None
         with self.transaction(write=True) as db:
-            if action == "bot-add":
-                exists = db.execute("SELECT 1 FROM bots WHERE id = ?", (bot,)).fetchone()
+            if action == "principal-add":
+                exists = db.execute("SELECT 1 FROM principals WHERE id = ?", (bot,)).fetchone()
                 if exists:
                     raise StoreError("conflict", "Bot already exists.")
-                db.execute("INSERT INTO bots (id, credential) VALUES (?, ?)", (bot, digest))
-            elif not db.execute("UPDATE bots SET credential = ? WHERE id = ?", (digest, bot)).rowcount:
+                db.execute("INSERT INTO principals (id, credential) VALUES (?, ?)", (bot, digest))
+            elif not db.execute("UPDATE principals SET credential = ? WHERE id = ?", (digest, bot)).rowcount:
                 raise StoreError("not_found", "Bot not found.")
             self._audit(db, "operator", action, subject=bot)
         return {"bot": bot, "token": token} if token else {"bot": bot}
@@ -340,7 +369,7 @@ class OpenBotStore:
     def change_membership(self, project, bot, *, grant):
         with self.transaction(write=True) as db:
             if (db.execute("SELECT 1 FROM projects WHERE id = ?", (project,)).fetchone() is None
-                    or db.execute("SELECT 1 FROM bots WHERE id = ?", (bot,)).fetchone() is None):
+                    or db.execute("SELECT 1 FROM principals WHERE id = ?", (bot,)).fetchone() is None):
                 raise StoreError("not_found", "Project or bot not found.")
             if grant:
                 changed = db.execute("INSERT OR IGNORE INTO memberships VALUES (?, ?)", (bot, project)).rowcount
@@ -589,7 +618,7 @@ class OpenBotStore:
 
     def inventory(self, limit):
         with self.transaction() as db:
-            bots = db.execute("SELECT id, credential IS NOT NULL AS active FROM bots ORDER BY id LIMIT ?", (limit,))
+            bots = db.execute("SELECT id, credential IS NOT NULL AS active FROM principals ORDER BY id LIMIT ?", (limit,))
             projects = db.execute("SELECT id FROM projects ORDER BY id LIMIT ?", (limit,))
             return {"bots": [{"id": row["id"], "active": bool(row["active"])} for row in bots],
                     "projects": [row["id"] for row in projects]}
@@ -605,11 +634,11 @@ class OpenBotStore:
         target.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         target._check_private(target.path.parent, directory=True)
         with new_private_file(target.path) as working_path:
-            working = OpenBotStore(working_path)
+            working = ServiceStore(working_path)
             source = self._connect()
             try:
                 if not self._check_schema(source, current=False):
-                    raise StoreError("wrong_store", "Use a supported OpenBot database.")
+                    raise StoreError("wrong_store", "Use a supported Recall service database.")
                 dest = working._connect()
                 try:
                     deadline = time.monotonic() + 15
@@ -629,6 +658,6 @@ class OpenBotStore:
                 if (db.execute("PRAGMA integrity_check").fetchone()[0] != "ok"
                         or db.execute("PRAGMA foreign_key_check").fetchone() is not None):
                     raise StoreError("wrong_store", "The snapshot failed its integrity check.")
-                db.execute("UPDATE bots SET credential = NULL")
+                db.execute("UPDATE principals SET credential = NULL")
                 working._audit(db, "operator", action)
         return {"status": "ok"}

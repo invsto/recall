@@ -1,4 +1,4 @@
-"""Trusted local operator commands for Recall's OpenBot store."""
+"""Trusted local operator commands for the Recall service store."""
 from __future__ import annotations
 
 import argparse
@@ -8,7 +8,7 @@ import re
 import sqlite3
 import sys
 
-from .openbot_store import OpenBotStore, StoreError, new_private_file
+from .store import ServiceStore, StoreError, new_private_file
 
 
 IDENTIFIER = r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}(?![\s\S])"
@@ -48,9 +48,15 @@ def retention_days(value):
 
 
 def add_parser(subparsers):
-    parser = subparsers.add_parser("openbot", help="operate the isolated OpenBot context service")
+    _add_store_parser(subparsers, "service", "operate the isolated Recall service store")
+    # Deprecated alias for one release: hidden from help, warns on stderr at run time.
+    _add_store_parser(subparsers, "openbot", argparse.SUPPRESS)  # neutral-core: allow deprecated alias
+
+
+def _add_store_parser(subparsers, name, help_text):
+    parser = subparsers.add_parser(name, help=help_text)
     parser.add_argument("--db", type=Path, required=True, help="database path in a private directory")
-    sub = parser.add_subparsers(dest="openbot_cmd", required=True)
+    sub = parser.add_subparsers(dest="store_cmd", required=True)
     sub.add_parser("init", help="create or migrate the service database")
     sub.add_parser("health", help="check readiness of the database")
     serve = sub.add_parser("serve", help="serve the HTTP MCP endpoint")
@@ -58,13 +64,17 @@ def add_parser(subparsers):
     serve.add_argument("--host", choices=("127.0.0.1", "::1"), default="127.0.0.1")
     serve.add_argument("--allowed-host", action="append", default=[], help="allow an additional exact Host header")
     serve.add_argument("--allowed-origin", action="append", default=[], help="allow an additional exact Origin")
-    for command in ("bot-add", "bot-rotate", "bot-revoke"):
-        sub.add_parser(command).add_argument("bot", type=identifier)
+    for command in ("principal-add", "principal-rotate", "principal-revoke"):
+        sub.add_parser(command, help="create, rotate, or revoke a principal credential").add_argument(
+            "principal", type=identifier,
+        )
+    for command in ("bot-add", "bot-rotate", "bot-revoke"):  # deprecated aliases
+        sub.add_parser(command, help=argparse.SUPPRESS).add_argument("principal", type=identifier)
     sub.add_parser("project-add", help="create a project with no members").add_argument("project", type=identifier)
     for command in ("member-grant", "member-revoke"):
         member = sub.add_parser(command)
         member.add_argument("project", type=identifier)
-        member.add_argument("bot", type=identifier)
+        member.add_argument("principal", type=identifier)
     proposal_list = sub.add_parser("proposal-list", help="list proposals without content")
     proposal_list.add_argument("project", type=identifier)
     proposal_list.add_argument("--status", choices=("pending", "accepted", "rejected"), default="pending")
@@ -81,7 +91,7 @@ def add_parser(subparsers):
     export.add_argument("key", type=identifier)
     export.add_argument("file", type=Path)
     checkpoint_delete = sub.add_parser("checkpoint-delete", help="erase a private checkpoint and its history")
-    checkpoint_delete.add_argument("bot", type=identifier)
+    checkpoint_delete.add_argument("principal", type=identifier)
     checkpoint_delete.add_argument("scope", choices=("task", "project"))
     checkpoint_delete.add_argument("key", type=identifier)
     publication_delete = sub.add_parser("publication-delete", help="erase a publication and its proposals")
@@ -96,7 +106,7 @@ def add_parser(subparsers):
     prune.add_argument("--apply", action="store_true", required=True, help="apply the retention settings")
     for command, help_text in (
         ("audit", "list recent metadata-only audit events"),
-        ("inventory", "list bot and project identifiers and credential status"),
+        ("inventory", "list principal and project identifiers and credential status"),
         ("member-list", "list the current members of a project"),
     ):
         listing = sub.add_parser(command, help=help_text)
@@ -108,8 +118,12 @@ def add_parser(subparsers):
 
 
 def run(args):
-    store = OpenBotStore(args.db)
-    command = args.openbot_cmd
+    if getattr(args, "cmd", None) == "openbot":  # neutral-core: allow deprecated alias
+        print('warning: "recall openbot" is deprecated; use "recall service".', file=sys.stderr)  # neutral-core: allow deprecated alias
+    store = ServiceStore(args.db)
+    command = {"bot-add": "principal-add", "bot-rotate": "principal-rotate", "bot-revoke": "principal-revoke"}.get(
+        args.store_cmd, args.store_cmd,
+    )
     try:
         if command == "init":
             result = store.initialize(create=True)
@@ -117,20 +131,20 @@ def run(args):
             result = store.health()
         elif command == "serve":
             try:
-                from .openbot_mcp import serve
+                from .mcp import serve
             except ModuleNotFoundError:
-                raise StoreError("missing_dependency", 'Install Recall with the "openbot" extra.') from None
+                raise StoreError("missing_dependency", 'Install Recall with the "service" extra.') from None
             if not 1 <= args.port <= 65535:
                 raise StoreError("invalid_input", "Port must be in 1–65535.")
             store.initialize()
             serve(store, args.host, args.port, args.allowed_host, args.allowed_origin)
             return 0
-        elif command in ("bot-add", "bot-rotate", "bot-revoke"):
-            result = store.change_credential(args.bot, command)
+        elif command in ("principal-add", "principal-rotate", "principal-revoke"):
+            result = store.change_credential(args.principal, command)
         elif command == "project-add":
             result = store.project_add(args.project)
         elif command in ("member-grant", "member-revoke"):
-            result = store.change_membership(args.project, args.bot, grant=command == "member-grant")
+            result = store.change_membership(args.project, args.principal, grant=command == "member-grant")
         elif command == "proposal-list":
             result = store.list_proposals(args.project, args.status, args.limit)
         elif command == "proposal-show":
@@ -143,7 +157,7 @@ def run(args):
                 staged.write_bytes(markdown.encode("utf-8"))
             result = {"exported": True}
         elif command == "checkpoint-delete":
-            result = store.delete_checkpoint(args.bot, args.scope, args.key)
+            result = store.delete_checkpoint(args.principal, args.scope, args.key)
         elif command == "publication-delete":
             result = store.delete_publication(args.project, args.kind, args.key)
         elif command == "prune":
@@ -155,9 +169,9 @@ def run(args):
         elif command == "member-list":
             result = store.member_list(args.project, args.limit)
         elif command == "backup":
-            result = store.copy_to(OpenBotStore(args.file), action="backup")
+            result = store.copy_to(ServiceStore(args.file), action="backup")
         elif command == "restore":
-            result = OpenBotStore(args.file).copy_to(store, action="restore")
+            result = ServiceStore(args.file).copy_to(store, action="restore")
     except StoreError as exc:
         print(json.dumps(exc.result), file=sys.stderr)
         return 1

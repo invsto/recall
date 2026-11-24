@@ -1,4 +1,4 @@
-"""Official Streamable HTTP adapter for the isolated OpenBot context service."""
+"""Official Streamable HTTP adapter for the isolated Recall service."""
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -19,9 +19,9 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 import uvicorn
 
-from .context_policy import validate_context
-from .openbot_cli import IDENTIFIER
-from .openbot_store import StoreError, canonical_json, credential_digest
+from ..context_policy import validate_context
+from .cli import IDENTIFIER
+from .store import StoreError, canonical_json, credential_digest
 
 
 ID = {"type": "string", "pattern": IDENTIFIER}
@@ -135,7 +135,7 @@ def invoke(store, operation, digest, arguments):
 
 
 def create_app(store, hosts, origins):
-    server = Server("recall-openbot")
+    server = Server("recall-service")
     validators = {name: Draft202012Validator(schema) for name, (_, schema) in TOOL_SPECS.items()}
     tools = [
         types.Tool(name=f"recall_{name}", description=description, inputSchema=schema)

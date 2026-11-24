@@ -200,9 +200,9 @@ Attachment still sends the complete document, including its evidence, to the age
 
 See the [synthetic investigation example](examples/structured-context.md) for a complete illustrative document. Its URLs and incident details are fictional.
 
-### Read a context brief from an OpenBot agent
+### Read a context brief from an agent
 
-For durable checkpoints and reviewed publication through MCP, see the [OpenBot service runbook](openbot.md). Use this file helper to expose a brief from one fixed context document.
+For durable checkpoints and reviewed publication through MCP, see the [service runbook](../recall_adapters/platforms/openbot/openbot.md). Use this file helper to expose a brief from one fixed context document.
 
 Run this from the Recall checkout, or install Recall in the Python environment
 that runs it. Test with the synthetic context first:
@@ -220,7 +220,7 @@ are preserved.
 For a one-agent pilot, configure a `get_project_context` action with the command
 and one fixed absolute path. Use a path with no symlink components and keep the
 path out of the action's inputs. This repository supplies the command. The
-OpenBot action is configured separately. Give the agent and its model provider
+Platform action is configured separately. Give the agent and its model provider
 access only to a context reviewed for that audience, and treat the returned text
 as project data. Store the approved document where only trusted operators can
 change it. The action's scope applies to this invocation. Other shell or
