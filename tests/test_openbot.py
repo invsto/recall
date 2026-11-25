@@ -46,7 +46,10 @@ class OpenBotTests(unittest.IsolatedAsyncioTestCase):
             timeout=15,
         )
         self.assertEqual(result.returncode, 0 if success else 1, result.stderr)
-        return json.loads(result.stdout if success else result.stderr)
+        # The deprecated `recall openbot` alias prints a warning line on stderr before the JSON.
+        stream = result.stdout if success else result.stderr
+        json_lines = [line for line in stream.splitlines() if line.startswith("{")]
+        return json.loads(json_lines[-1] if json_lines else stream)
 
     @contextlib.contextmanager
     def server(self, *, redact=()):
