@@ -42,7 +42,11 @@ class ServiceMigrationTests(unittest.TestCase):
             [("principals",)],
         )
         self.assertEqual(query(self.db, "SELECT id FROM principals ORDER BY id"), [("alpha",), ("beta",)])
-        self.assertEqual(query(self.db, "SELECT bot, project FROM memberships"), [("alpha", "default")])
+        self.assertEqual(query(self.db, "SELECT principal, project FROM memberships"), [("alpha", "default")])
+        for table in ("checkpoints", "checkpoint_revisions", "receipts", "memberships"):
+            columns = [row[1] for row in query(self.db, f"PRAGMA table_info({table})")]
+            self.assertIn("principal", columns, table)
+            self.assertNotIn("bot", columns, table)
         self.assertEqual(query(self.db, "PRAGMA foreign_key_check"), [])
 
     def test_migration_keeps_a_verified_backup_of_the_v2_store(self):

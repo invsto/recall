@@ -102,6 +102,10 @@ MIGRATIONS = (
     """,
     """
     ALTER TABLE bots RENAME TO principals;
+    ALTER TABLE checkpoints RENAME COLUMN bot TO principal;
+    ALTER TABLE checkpoint_revisions RENAME COLUMN bot TO principal;
+    ALTER TABLE receipts RENAME COLUMN bot TO principal;
+    ALTER TABLE memberships RENAME COLUMN bot TO principal;
     """,
 )
 
@@ -297,8 +301,8 @@ class ServiceStore:
     def _checkpoint(self, db, bot, scope, key):
         return db.execute(
             """SELECT c.revision, c.updated, r.content FROM checkpoints AS c
-               LEFT JOIN checkpoint_revisions AS r USING (bot, scope, key, revision)
-               WHERE c.bot = ? AND c.scope = ? AND c.key = ?""",
+               LEFT JOIN checkpoint_revisions AS r USING (principal, scope, key, revision)
+               WHERE c.principal = ? AND c.scope = ? AND c.key = ?""",
             (bot, scope, key),
         ).fetchone()
 
@@ -310,7 +314,7 @@ class ServiceStore:
             else:
                 row = db.execute(
                     """SELECT revision, updated, content FROM checkpoint_revisions
-                       WHERE bot = ? AND scope = ? AND key = ? AND revision = ?""",
+                       WHERE principal = ? AND scope = ? AND key = ? AND revision = ?""",
                     (bot, scope, key, revision),
                 ).fetchone()
                 if row is None:
@@ -323,7 +327,7 @@ class ServiceStore:
     def _checkpoint_retry(self, db, bot, request_id, payload):
         fingerprint = sha256(canonical_json(payload).encode("utf-8")).digest()
         receipt = db.execute(
-            "SELECT fingerprint, revision FROM receipts WHERE bot = ? AND request_id = ?",
+            "SELECT fingerprint, revision FROM receipts WHERE principal = ? AND request_id = ?",
             (bot, request_id),
         ).fetchone()
         if receipt and receipt["fingerprint"] != fingerprint:
@@ -342,9 +346,9 @@ class ServiceStore:
             revision = expected_revision + 1
             now = timestamp()
             db.execute(
-                """INSERT INTO checkpoints (bot, scope, key, revision, updated)
+                """INSERT INTO checkpoints (principal, scope, key, revision, updated)
                    VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT (bot, scope, key) DO UPDATE SET
+                   ON CONFLICT (principal, scope, key) DO UPDATE SET
                    revision = excluded.revision, updated = excluded.updated""",
                 (bot, scope, key, revision, now),
             )
@@ -353,7 +357,7 @@ class ServiceStore:
                 (bot, scope, key, revision, now, canonical_json(checkpoint)),
             )
             db.execute(
-                "INSERT INTO receipts (bot, request_id, fingerprint, scope, key, revision) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO receipts (principal, request_id, fingerprint, scope, key, revision) VALUES (?, ?, ?, ?, ?, ?)",
                 (bot, request_id, fingerprint, scope, key, revision),
             )
             self._audit(db, f"bot:{bot}", "checkpoint-save", revision=revision)
@@ -374,7 +378,7 @@ class ServiceStore:
             if grant:
                 changed = db.execute("INSERT OR IGNORE INTO memberships VALUES (?, ?)", (bot, project)).rowcount
             else:
-                changed = db.execute("DELETE FROM memberships WHERE bot = ? AND project = ?", (bot, project)).rowcount
+                changed = db.execute("DELETE FROM memberships WHERE principal = ? AND project = ?", (bot, project)).rowcount
                 db.execute("DELETE FROM proposals WHERE author = ? AND project = ? AND status = 'pending'",
                            (bot, project))
             if changed:
@@ -383,7 +387,7 @@ class ServiceStore:
         return {"project": project, "bot": bot, "member": grant}
 
     def _member(self, db, bot, project):
-        if db.execute("SELECT 1 FROM memberships WHERE bot = ? AND project = ?", (bot, project)).fetchone() is None:
+        if db.execute("SELECT 1 FROM memberships WHERE principal = ? AND project = ?", (bot, project)).fetchone() is None:
             raise StoreError("not_found", "Project not found for this bot.")
 
     def _publication(self, db, project, kind, key):
@@ -512,8 +516,8 @@ class ServiceStore:
             rows = db.execute(
                 """SELECT 'checkpoint' AS kind, c.scope, c.key,
                           CASE WHEN c.scope = 'project' THEN c.key END AS project, c.revision, c.updated AS changed
-                   FROM checkpoints AS c JOIN checkpoint_revisions AS r USING (bot, scope, key, revision)
-                   WHERE c.bot = :bot
+                   FROM checkpoints AS c JOIN checkpoint_revisions AS r USING (principal, scope, key, revision)
+                   WHERE c.principal = :principal
                      AND (:project IS NULL OR (c.scope = 'project' AND c.key = :project))
                      AND (instr(fold(c.key), :query) > 0 OR content_contains(r.content, :query))
                    UNION ALL
@@ -521,20 +525,20 @@ class ServiceStore:
                    FROM memberships AS m
                    JOIN publications AS current ON m.project = current.project
                    JOIN proposals AS p ON p.id = current.proposal_id
-                   WHERE m.bot = :bot AND (:project IS NULL OR m.project = :project)
+                   WHERE m.principal = :principal AND (:project IS NULL OR m.project = :project)
                      AND (instr(fold(current.key), :query) > 0 OR content_contains(p.content, :query))
                    ORDER BY changed DESC, kind, project, key LIMIT :limit""",
-                {"bot": bot, "project": project, "query": query.strip().casefold(), "limit": limit},
+                {"principal": bot, "project": project, "query": query.strip().casefold(), "limit": limit},
             )
             return {"matches": [dict(row) for row in rows]}
 
     def _erase_checkpoint(self, db, bot, scope, key, previous_revision, now):
         revision = previous_revision + 1
         db.execute(
-            "UPDATE checkpoints SET revision = ?, updated = ? WHERE bot = ? AND scope = ? AND key = ?",
+            "UPDATE checkpoints SET revision = ?, updated = ? WHERE principal = ? AND scope = ? AND key = ?",
             (revision, now, bot, scope, key),
         )
-        count = db.execute("DELETE FROM checkpoint_revisions WHERE bot = ? AND scope = ? AND key = ?",
+        count = db.execute("DELETE FROM checkpoint_revisions WHERE principal = ? AND scope = ? AND key = ?",
                            (bot, scope, key)).rowcount
         return revision, count
 
@@ -578,8 +582,8 @@ class ServiceStore:
         with self.transaction(write=True) as db:
             checkpoint_cutoff = retention_cutoff(checkpoint_days)
             checkpoints = db.execute(
-                """SELECT c.bot, c.scope, c.key, c.revision FROM checkpoints AS c
-                   JOIN checkpoint_revisions AS r USING (bot, scope, key, revision) WHERE r.updated < ?""",
+                """SELECT c.principal, c.scope, c.key, c.revision FROM checkpoints AS c
+                   JOIN checkpoint_revisions AS r USING (principal, scope, key, revision) WHERE r.updated < ?""",
                 (checkpoint_cutoff,),
             ).fetchall()
             now = timestamp()
@@ -625,9 +629,9 @@ class ServiceStore:
 
     def member_list(self, project, limit):
         with self.transaction() as db:
-            members = db.execute("SELECT bot FROM memberships WHERE project = ? ORDER BY bot LIMIT ?",
+            members = db.execute("SELECT principal FROM memberships WHERE project = ? ORDER BY principal LIMIT ?",
                                  (project, limit))
-            return {"project": project, "members": [row["bot"] for row in members]}
+            return {"project": project, "members": [row["principal"] for row in members]}
 
     def copy_to(self, target, *, action):
         """Write a consistent, credential-free snapshot to a new private path."""
