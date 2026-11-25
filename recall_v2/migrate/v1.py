@@ -37,7 +37,7 @@ from ..core.model import RECEIPT_TTL_MICROS
 from ..store import audit
 from ..store.connection import check_engine, check_private, write_transaction
 from ..store.repository import Store, system_clock
-from ..store.schema import APPLICATION_ID, USER_VERSION
+from ..store.schema import APPLICATION_ID, MIGRATIONS
 
 SUPPORTED_V1_VERSIONS = (2, 3)
 REPORT_SUFFIX = ".migration-report.json"
@@ -76,7 +76,7 @@ def read_v1(source: Path) -> tuple[int, dict[str, list[dict]]]:
             raise RecallError("wrong_store", "Not a Recall store.") from None
         if app_id != APPLICATION_ID:
             raise RecallError("wrong_store", "Not a Recall store.")
-        if version == USER_VERSION:
+        if version in MIGRATIONS:
             raise RecallError("wrong_store", "The source is already a v2 store.")
         if version > max(SUPPORTED_V1_VERSIONS):
             raise RecallError("schema_version", "The source store is newer than this build.", user_version=version)

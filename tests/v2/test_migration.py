@@ -11,6 +11,7 @@ import unittest
 
 from recall_v2.core.errors import RecallError
 from recall_v2.migrate import migrate_v1
+from recall_v2.store.schema import USER_VERSION
 from recall_v2.migrate.v1 import report_path, v1_ref
 from recall_v2.store import Store, audit
 
@@ -64,7 +65,7 @@ class FixtureMigrationTests(StoreTestCase):
                          ["v2.sqlite3", "v2.sqlite3.migration-report.json"])
 
         self.assertEqual(query(self.dest, "PRAGMA foreign_key_check"), [])
-        self.assertEqual(query(self.dest, "PRAGMA user_version"), [(10,)])
+        self.assertEqual(query(self.dest, "PRAGMA user_version"), [(USER_VERSION,)])
         self.assertEqual(query(self.dest, "SELECT id, revoked_at IS NULL FROM principals ORDER BY id"),
                          [("alpha", 1), ("beta", 1)])
         self.assertEqual(query(self.dest, "SELECT principal_id, project_id FROM memberships"), [("alpha", "default")])

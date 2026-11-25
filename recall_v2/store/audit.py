@@ -17,7 +17,7 @@ ANCHOR_NAME = "audit_anchor"
 # Actions this build writes. Legacy (imported) rows keep their original action names.
 ACTIONS = frozenset({
     "principal_add", "principal_rotate", "principal_revoke", "project_add", "member_add", "member_remove",
-    "save", "retract", "review_approve", "review_reject", "delete", "migrate",
+    "save", "retract", "review_approve", "review_reject", "delete", "migrate", "pin", "unpin",
 })
 
 

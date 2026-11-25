@@ -1,8 +1,14 @@
-"""Store schema (user_version 10) and its migrations."""
+"""Store schema (user_version 11) and its migrations.
+
+Version 10 is the M1 layout. Version 11 adds what retrieval needs: an FTS5 vocabulary view for
+application-side BM25 over the caller's visible set, FTS5 secure-delete, and a (kind, key) index for
+fact-mode lookup. Every store is built by applying each step in order, so a fresh store and a migrated
+version-10 store end up identical.
+"""
 from __future__ import annotations
 
 APPLICATION_ID = 0x52434F42
-USER_VERSION = 10
+USER_VERSION = 11
 
 SCHEMA_V10 = """
 CREATE TABLE principals (
@@ -242,5 +248,17 @@ BEGIN
 END;
 """
 
+SCHEMA_V11 = """
+-- Per-document, per-column term instances of fts_items (term, doc, col, offset). Read with a term
+-- constraint to get term frequencies; document lengths come from fts_items_docsize.
+CREATE VIRTUAL TABLE fts_items_vocab USING fts5vocab(fts_items, instance);
+
+-- Deleting an FTS row removes its index entries at once instead of leaving delete markers.
+INSERT INTO fts_items (fts_items, rank) VALUES ('secure-delete', 1);
+
+CREATE INDEX items_by_kind_key ON items (kind, key) WHERE key IS NOT NULL;
+"""
+
 # version -> DDL that brings a store from the previous version to this one.
-MIGRATIONS = {USER_VERSION: SCHEMA_V10}
+MIGRATIONS = {10: SCHEMA_V10, 11: SCHEMA_V11}
+FIRST_VERSION = 10

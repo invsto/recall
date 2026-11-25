@@ -13,7 +13,7 @@ from typing import Callable, Optional
 
 from ..core import model, normalise, timefmt, validity
 from ..core.errors import RecallError, invalid
-from . import audit, receipts
+from . import audit, embeddings, receipts
 from .connection import (check_engine, check_private, create_file, initialise, raw_connect, read_transaction,
                          write_transaction)
 from .visibility import visible_items, visible_revisions
@@ -84,15 +84,22 @@ def revision_dict(row: sqlite3.Row) -> dict:
 class Store:
     """One store file. Open with Store.open(path, create=...)."""
 
-    def __init__(self, db: sqlite3.Connection, path: Path, clock: Clock):
+    PIN_LIMIT = 8
+
+    def __init__(self, db: sqlite3.Connection, path: Path, clock: Clock,
+                 embedder: Optional[embeddings.Embedder] = None):
         self.db = db
         self.path = path
         self.clock = clock
+        # Optional; when set, embeddings are written in each revision's transaction and lookup runs
+        # the vector leg. Off by default.
+        self.embedder = embedder
 
     # -- lifecycle -------------------------------------------------------------------------------
 
     @classmethod
-    def open(cls, path, *, create: bool = False, clock: Optional[Clock] = None) -> "Store":
+    def open(cls, path, *, create: bool = False, clock: Optional[Clock] = None,
+             embedder: Optional[embeddings.Embedder] = None) -> "Store":
         check_engine()
         path = Path(path).expanduser().absolute()
         if create and not os.path.lexists(path):
@@ -106,7 +113,7 @@ class Store:
         except BaseException:
             db.close()
             raise
-        return cls(db, path, clock or system_clock)
+        return cls(db, path, clock or system_clock, embedder)
 
     def close(self) -> None:
         self.db.close()
@@ -219,6 +226,17 @@ class Store:
         else:
             title, body = row["title"], row["body"]
         db.execute("INSERT INTO fts_items (rowid, title, body) VALUES (?, ?, ?)", (row["rid"], title or "", body or ""))
+        if self.embedder is not None:
+            self._embed_index(db, item_id, rev, kind, title or "", body or "")
+
+    def _embed_index(self, db, item_id: str, rev: int, kind: str, title: str, body: str) -> None:
+        """Embeddings follow the FTS rule: current revision for non-facts, every accepted fact revision."""
+        model_name, dim = self.embedder.model, self.embedder.dim
+        if kind != "fact":
+            db.execute("DELETE FROM embeddings WHERE item_id = ? AND model = ?", (item_id, model_name))
+        [vector] = self.embedder.embed([embeddings.document_text(title, body)])
+        db.execute("INSERT OR REPLACE INTO embeddings (item_id, rev, model, dim, vector) VALUES (?, ?, ?, ?, ?)",
+                   (item_id, rev, model_name, dim, embeddings.encode(vector, dim)))
 
     def _member(self, db, principal_id: str, project_id: str) -> bool:
         return db.execute("SELECT 1 FROM memberships WHERE principal_id = ? AND project_id = ?",
@@ -369,6 +387,37 @@ class Store:
             result = {"item_id": item_id, "rev": new_rev}
             receipts.record(db, caller, request_id, digest, item_id, new_rev, now)
             return result
+
+    # -- pins ------------------------------------------------------------------------------------
+
+    def pin(self, principal: Principal, *, item_id: str) -> dict:
+        """Pin a visible item for the caller (at most PIN_LIMIT pins per principal)."""
+        with write_transaction(self.db) as db:
+            now = self.clock()
+            caller = self._caller(db, principal.token_digest)
+            item = db.execute(f"SELECT id, project_id FROM items AS i WHERE i.id = :id AND {visible_items('i')}",
+                              {"id": item_id, "caller": caller}).fetchone()
+            if item is None:
+                raise RecallError("not_found", "No such item.")
+            if db.execute("SELECT 1 FROM pins WHERE principal_id = ? AND item_id = ?", (caller, item_id)).fetchone():
+                return {"item_id": item_id, "pinned": True}
+            if db.execute("SELECT COUNT(*) FROM pins WHERE principal_id = ?", (caller,)).fetchone()[0] >= self.PIN_LIMIT:
+                raise RecallError("pin_limit", "The principal already has 8 pins.")
+            db.execute("INSERT INTO pins (principal_id, item_id) VALUES (?, ?)", (caller, item_id))
+            audit.append(db, at=now, actor=caller, action="pin", item_id=item_id, project_id=item["project_id"])
+            return {"item_id": item_id, "pinned": True}
+
+    def unpin(self, principal: Principal, *, item_id: str) -> dict:
+        with write_transaction(self.db) as db:
+            now = self.clock()
+            caller = self._caller(db, principal.token_digest)
+            item = db.execute(f"SELECT id, project_id FROM items AS i WHERE i.id = :id AND {visible_items('i')}",
+                              {"id": item_id, "caller": caller}).fetchone()
+            if item is None:
+                raise RecallError("not_found", "No such item.")
+            if db.execute("DELETE FROM pins WHERE principal_id = ? AND item_id = ?", (caller, item_id)).rowcount:
+                audit.append(db, at=now, actor=caller, action="unpin", item_id=item_id, project_id=item["project_id"])
+            return {"item_id": item_id, "pinned": False}
 
     # -- review (operator) -----------------------------------------------------------------------
 

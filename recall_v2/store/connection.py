@@ -9,7 +9,7 @@ import stat
 import time
 
 from ..core.errors import RecallError
-from .schema import APPLICATION_ID, MIGRATIONS, USER_VERSION
+from .schema import APPLICATION_ID, FIRST_VERSION, MIGRATIONS, USER_VERSION
 
 MIN_SQLITE = (3, 37, 0)
 BUSY_TIMEOUT_MS = 5000
@@ -80,7 +80,7 @@ def initialise(db: sqlite3.Connection) -> None:
     version = db.execute("PRAGMA user_version").fetchone()[0]
     empty = db.execute("SELECT 1 FROM sqlite_schema LIMIT 1").fetchone() is None
     if app_id == 0 and version == 0 and empty:
-        script = MIGRATIONS[USER_VERSION]
+        script = "\n".join(MIGRATIONS[step] for step in range(FIRST_VERSION, USER_VERSION + 1))
         try:
             db.executescript(
                 "BEGIN IMMEDIATE;\n" + script
@@ -93,7 +93,22 @@ def initialise(db: sqlite3.Connection) -> None:
             raise
         db.execute("PRAGMA journal_mode = WAL")
         return
+    if app_id == APPLICATION_ID and FIRST_VERSION <= version < USER_VERSION:
+        upgrade(db, version)
+        return
     check_version(app_id, version)
+
+
+def upgrade(db: sqlite3.Connection, version: int) -> None:
+    """Apply every step after `version` in one IMMEDIATE transaction; on failure nothing changes."""
+    script = "\n".join(MIGRATIONS[step] for step in range(version + 1, USER_VERSION + 1))
+    try:
+        db.executescript(f"BEGIN IMMEDIATE;\n{script}\nPRAGMA user_version = {USER_VERSION};\nCOMMIT;")
+    except sqlite3.Error as exc:
+        if db.in_transaction:
+            db.execute("ROLLBACK")
+        raise RecallError("migration_failed", "The schema upgrade was rolled back.",
+                          reason=type(exc).__name__) from None
 
 
 def check_version(app_id: int, version: int) -> None:
