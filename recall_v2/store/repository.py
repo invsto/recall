@@ -13,6 +13,7 @@ from typing import Callable, Optional
 
 from ..core import model, normalise, timefmt, validity
 from ..core.errors import RecallError, invalid
+from ..governance import dedupe
 from . import audit, embeddings, receipts
 from .connection import (check_engine, check_private, create_file, initialise, raw_connect, read_transaction,
                          write_transaction)
@@ -268,6 +269,25 @@ class Store:
         return db.execute("SELECT * FROM items WHERE scope_kind = 'project' AND project_id = ? AND kind = ?"
                           " AND key = ?", (req.project, req.kind, req.key)).fetchone()
 
+    def _exact_duplicate(self, db, caller: str, item_id: str, req: model.SaveRequest, state: str,
+                         hashed: Optional[bytes], now: int) -> Optional[dict]:
+        """Section 3.3 exact dedupe: the item's latest revision of the same state, if its normalised body
+        hash equals the new body's. Facts carry no body, so a fact save always writes a revision (a
+        re-assertion moves valid_from and accepted_at, which current truth depends on).
+
+        Only revisions visible to the caller are compared, so another author's candidate is never
+        returned (or revealed) to the caller.
+        """
+        if req.kind == "fact":
+            return None
+        latest = db.execute(
+            f"SELECT r.rev, r.body_hash FROM {REVISION_FROM} WHERE i.id = :id AND r.state = :state"
+            f" AND {visible_revisions('r', 'i')} ORDER BY r.rev DESC LIMIT 1",
+            {"id": item_id, "state": state, "caller": caller}).fetchone()
+        if latest is not None and latest["body_hash"] == hashed:
+            return {"item_id": item_id, "rev": latest["rev"]}
+        return None
+
     def _save(self, db, caller: str, req: model.SaveRequest, request_id: str, now: int) -> dict:
         if req.scope == "project" and not self._member(db, caller, req.project):
             raise RecallError("not_found", "No such project.")
@@ -278,11 +298,10 @@ class Store:
         state = model.state_on_write(req.scope)
         hashed = None if req.body is None else normalise.body_hash(req.body)
 
-        if item is not None and req.kind != "fact":
-            latest = db.execute("SELECT rev, body_hash FROM item_revisions WHERE item_id = ? AND state = ?"
-                                " ORDER BY rev DESC LIMIT 1", (item["id"], state)).fetchone()
-            if latest is not None and latest["body_hash"] == hashed:
-                return {"item_id": item["id"], "rev": latest["rev"]}
+        if item is not None:
+            duplicate = self._exact_duplicate(db, caller, item["id"], req, state, hashed, now)
+            if duplicate is not None:
+                return duplicate
 
         if item is None:
             item_id = self._ulid(now)
@@ -327,6 +346,15 @@ class Store:
                 if validity.conflicts_with(valid_from, valid_to, req.fact.value_json, existing, value_json, revisions):
                     db.execute("INSERT INTO conflicts (id, item_id, rev_a, rev_b, status) VALUES (?, ?, ?, ?, ?)",
                                (self._ulid(now), item_id, existing.rev, rev, status))
+
+        if state == "candidate":
+            if req.kind == "fact":
+                text = embeddings.document_text(f"{req.fact.subject} | {req.fact.predicate}", req.fact.value_json)
+            else:
+                text = embeddings.document_text(req.title or "", req.body or "")
+            dedupe.flag_near_duplicates(db, self.embedder, caller=caller, item_id=item_id, rev=rev, kind=req.kind,
+                                        scope_kind=req.scope, owner_id=caller, project_id=req.project, text=text,
+                                        now=now)
 
         if state == "accepted":
             db.execute("UPDATE items SET current_rev = MAX(current_rev, ?) WHERE id = ?", (rev, item_id))
@@ -423,31 +451,63 @@ class Store:
 
     def _review(self, item_id: str, rev: int, new_state: str, reviewer: str, note: Optional[str]) -> dict:
         with write_transaction(self.db) as db:
-            now = self.clock()
-            row = db.execute(
-                "SELECT i.kind, i.project_id, i.current_rev, i.deleted_at, r.state, r.actor_id, r.meta_json"
-                " FROM items AS i JOIN item_revisions AS r ON r.item_id = i.id WHERE i.id = ? AND r.rev = ?",
-                (item_id, rev)).fetchone()
-            if row is None or row["deleted_at"] is not None:
-                raise RecallError("not_found", "No such revision.")
-            model.check_transition(row["state"], new_state)
-            if new_state == "accepted":
-                base = json.loads(row["meta_json"] or "{}").get("base_rev", row["current_rev"])
-                author = db.execute("SELECT revoked_at FROM principals WHERE id = ?", (row["actor_id"],)).fetchone()
-                if (row["current_rev"] != base or author is None or author["revoked_at"] is not None
-                        or (row["project_id"] is not None and not self._member(db, row["actor_id"], row["project_id"]))):
-                    raise RecallError("stale_review", "The approval basis changed.")
-            db.execute(
-                "UPDATE item_revisions SET state = ?, accepted_at = ?, reviewed_by = ?, reviewed_at = ?, review_note = ?"
-                " WHERE item_id = ? AND rev = ?",
-                (new_state, now if new_state == "accepted" else None, reviewer, now, note, item_id, rev))
-            if new_state == "accepted":
-                db.execute("UPDATE items SET current_rev = MAX(current_rev, ?) WHERE id = ?", (rev, item_id))
-                self._fts_index(db, item_id, rev, row["kind"])
-            audit.append(db, at=now, actor=model.OPERATOR_ACTOR,
-                         action="review_approve" if new_state == "accepted" else "review_reject",
-                         item_id=item_id, rev=rev, project_id=row["project_id"])
-            return {"item_id": item_id, "rev": rev, "state": new_state}
+            return self._review_in(db, self.clock(), item_id, rev, new_state, reviewer, note)
+
+    def review_row(self, db, item_id: str, rev: int) -> sqlite3.Row:
+        """The item and revision fields review needs; not_found for a missing or deleted item."""
+        row = db.execute(
+            "SELECT i.kind, i.scope_kind, i.owner_id, i.project_id, i.current_rev, i.deleted_at, r.rev, r.state,"
+            " r.actor_id, r.meta_json, r.reviewed_at FROM items AS i JOIN item_revisions AS r ON r.item_id = i.id"
+            " WHERE i.id = ? AND r.rev = ?", (item_id, rev)).fetchone()
+        if row is None or row["deleted_at"] is not None:
+            raise RecallError("not_found", "No such revision.")
+        if row["state"] != "candidate" and row["reviewed_at"] is not None:
+            raise RecallError("stale_review", "The revision was already reviewed.")
+        return row
+
+    def check_approval_basis(self, db, row: sqlite3.Row) -> None:
+        """Section 3.6: stale_review if current_rev changed since the candidate was written, or its
+        principal author is no longer a member (project scope) or is revoked. Candidates written by the
+        operator or by extraction (actor IDs starting with "~") have no principal to re-check."""
+        base = json.loads(row["meta_json"] or "{}").get("base_rev", row["current_rev"])
+        if row["current_rev"] != base:
+            raise RecallError("stale_review", "The approval basis changed.", current_revision=row["current_rev"])
+        if row["actor_id"].startswith("~"):
+            return
+        author = db.execute("SELECT revoked_at FROM principals WHERE id = ?", (row["actor_id"],)).fetchone()
+        if (author is None or author["revoked_at"] is not None
+                or (row["project_id"] is not None and not self._member(db, row["actor_id"], row["project_id"]))):
+            raise RecallError("stale_review", "The approval basis changed.")
+
+    def _review_in(self, db, now: int, item_id: str, rev: int, new_state: str, reviewer: str,
+                   note: Optional[str]) -> dict:
+        """Approve or reject one candidate inside the caller's IMMEDIATE transaction.
+
+        Approval is a compare-and-swap on the candidate's base revision (check_approval_basis). Open
+        conflicts on the revision are closed as `resolved` by this explicit operator action, each with
+        its own audit event; nothing else ever closes an open conflict.
+        """
+        row = self.review_row(db, item_id, rev)
+        model.check_transition(row["state"], new_state)
+        if new_state == "accepted":
+            self.check_approval_basis(db, row)
+        db.execute(
+            "UPDATE item_revisions SET state = ?, accepted_at = ?, reviewed_by = ?, reviewed_at = ?, review_note = ?"
+            " WHERE item_id = ? AND rev = ?",
+            (new_state, now if new_state == "accepted" else None, reviewer, now, note, item_id, rev))
+        if new_state == "accepted":
+            db.execute("UPDATE items SET current_rev = MAX(current_rev, ?) WHERE id = ?", (rev, item_id))
+            self._fts_index(db, item_id, rev, row["kind"])
+        audit.append(db, at=now, actor=model.OPERATOR_ACTOR,
+                     action="review_approve" if new_state == "accepted" else "review_reject",
+                     item_id=item_id, rev=rev, project_id=row["project_id"])
+        for conflict in db.execute("SELECT id FROM conflicts WHERE item_id = ? AND rev_b = ? AND status = 'open'"
+                                   " ORDER BY id", (item_id, rev)).fetchall():
+            db.execute("UPDATE conflicts SET status = 'resolved', resolved_by = ?, resolved_at = ? WHERE id = ?",
+                       (reviewer, now, conflict["id"]))
+            audit.append(db, at=now, actor=model.OPERATOR_ACTOR, action="conflict_resolve", item_id=item_id,
+                         rev=rev, project_id=row["project_id"])
+        return {"item_id": item_id, "rev": rev, "state": new_state}
 
     def review_approve(self, item_id: str, rev: int, *, reviewer: str = model.OPERATOR_ACTOR) -> dict:
         return self._review(item_id, rev, "accepted", reviewer, None)
