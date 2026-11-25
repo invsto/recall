@@ -7,11 +7,13 @@ any caller that is not an OperatorSession.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import sqlite3
 from typing import Optional, Union
 
 from .. import SCHEMA_VERSION
+from ..core import timefmt
 from ..core.errors import RecallError
 from ..extraction import runs as _runs
 from ..extraction import sources as _sources
@@ -24,8 +26,11 @@ from ..lifecycle import doctor as _doctor
 from ..lifecycle import expiry as _expiry
 from ..lifecycle import export as _export
 from ..lifecycle import retention as _retention
+from ..migrate.v1 import migrate_v1
 from ..retrieval.envelope import error_envelope
+from ..store.connection import read_transaction
 from ..store.repository import Store
+from ..store.schema import USER_VERSION
 
 UNSET = _review.UNSET
 
@@ -69,6 +74,61 @@ class Operator:
         return self._session.store
 
     # -- setup -----------------------------------------------------------------------------------
+
+    @staticmethod
+    def init(store: Union[str, Path], *, clock=None) -> dict:
+        """Create a new empty store (directory 0700, file 0600), or confirm an existing current one."""
+        op = "init"
+        try:
+            path = Path(store).expanduser().absolute()
+            created = not os.path.lexists(path)
+            if created and not path.parent.exists():
+                path.parent.mkdir(mode=0o700, parents=True)
+            Store.open(path, create=True, clock=clock).close()
+        except RecallError as error:
+            return error_envelope(op, error)
+        except (OSError, sqlite3.Error):
+            return error_envelope(op, RecallError("storage_unavailable", "The store could not be created."))
+        return _ok(op, [{"store": str(path), "created": created, "user_version": USER_VERSION}])
+
+    @staticmethod
+    def migrate(source: Union[str, Path], dest: Union[str, Path], *, dry_run: bool = False, clock=None) -> dict:
+        """Build a new v2 store at dest from a v1 store (section 7.9). The v1 file is never modified."""
+        op = "migrate"
+        try:
+            report = migrate_v1(source, dest, clock=clock, dry_run=dry_run)
+        except RecallError as error:
+            return error_envelope(op, error)
+        except (OSError, sqlite3.Error):
+            return error_envelope(op, RecallError("migration_failed", "The migration was rolled back."))
+        return _ok(op, [report])
+
+    def _rows(self, sql: str, params=()) -> list[dict]:
+        with read_transaction(self._store.db) as db:
+            return [dict(row) for row in db.execute(sql, params)]
+
+    def principal_list(self) -> dict:
+        """Principals with creation and revocation times; token digests are never shown."""
+        def run():
+            return [{"principal_id": row["id"], "created_at": timefmt.format_rfc3339(row["created_at"]),
+                     "revoked_at": None if row["revoked_at"] is None else timefmt.format_rfc3339(row["revoked_at"])}
+                    for row in self._rows("SELECT id, created_at, revoked_at FROM principals ORDER BY id")]
+        return self._call("principal_list", run)
+
+    def project_list(self) -> dict:
+        def run():
+            return [{"project_id": row["id"], "created_at": timefmt.format_rfc3339(row["created_at"])}
+                    for row in self._rows("SELECT id, created_at FROM projects ORDER BY id")]
+        return self._call("project_list", run)
+
+    def member_list(self, project_id: Optional[str] = None) -> dict:
+        def run():
+            where, params = ("WHERE project_id = ?", (project_id,)) if project_id is not None else ("", ())
+            return [{"principal_id": row["principal_id"], "project_id": row["project_id"],
+                     "added_at": timefmt.format_rfc3339(row["added_at"])}
+                    for row in self._rows("SELECT principal_id, project_id, added_at FROM memberships "
+                                          f"{where} ORDER BY project_id, principal_id", params)]
+        return self._call("member_list", run)
 
     def principal_add(self, principal_id: str) -> dict:
         """The token is shown once, in this result."""

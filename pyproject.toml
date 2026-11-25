@@ -26,6 +26,8 @@ dependencies = []
 
 [project.optional-dependencies]
 service = ["mcp>=1.30,<2"]
+# Recall v2 MCP server (python -m recall_v2 mcp / serve).
+v2 = ["mcp>=1.30,<2"]
 # Deprecated alias for one release; use the "service" extra.
 openbot = ["mcp>=1.30,<2"]
 semantic = [
@@ -38,4 +40,17 @@ recall = "recall:main"
 
 [tool.setuptools]
 py-modules = ["recall"]
-packages = ["recall_core"]
+packages = [
+  "recall_core",
+  "recall_v2",
+  "recall_v2.adapters",
+  "recall_v2.api",
+  "recall_v2.bench",
+  "recall_v2.core",
+  "recall_v2.extraction",
+  "recall_v2.governance",
+  "recall_v2.lifecycle",
+  "recall_v2.migrate",
+  "recall_v2.retrieval",
+  "recall_v2.store",
+]
