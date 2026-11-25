@@ -1,0 +1,5 @@
+{"chunk_hash": "3656f15811ca20acb23161c2887dc92204daa40da575700a8887425efe7f180b", "label": "accepted", "note": "SYNTHETIC test label, not an owner label: fact matches the source line", "synthetic": true}
+{"chunk_hash": "9b164627bf070cbef10a11c52dd1e18c034f2b3c35644b8caee00cb17a1a4b83", "label": "accepted", "note": "SYNTHETIC test label, not an owner label: note is durable", "synthetic": true}
+{"chunk_hash": "50bd3313d0035207d03b4c05a8f42fcb58f0308176bced13453acc0b56499a94", "label": "rejected", "note": "SYNTHETIC test label, not an owner label: chit-chat, not memory", "synthetic": true}
+{"chunk_hash": "3656f15811ca20acb23161c2887dc92204daa40da575700a8887425efe7f180b", "label": "accepted", "note": "SYNTHETIC test label, not an owner label: second candidate of chunk 1", "synthetic": true}
+{"chunk_hash": "f7663d0b6edbdd3ca2ca06c340854b2639172cb301f8ac434471dadf5cdbe843", "label": "rejected", "note": "SYNTHETIC test label, not an owner label: wrong value", "synthetic": true}

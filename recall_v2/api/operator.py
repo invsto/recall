@@ -13,6 +13,8 @@ from typing import Optional, Union
 
 from .. import SCHEMA_VERSION
 from ..core.errors import RecallError
+from ..extraction import runs as _runs
+from ..extraction import sources as _sources
 from ..governance import conflicts as _conflicts
 from ..governance import review as _review
 from ..governance.authority import open_session
@@ -118,6 +120,48 @@ class Operator:
     def conflict_resolve(self, conflict_id: str, action: str, *, valid_from=UNSET, valid_to=UNSET) -> dict:
         return self._call("conflict_resolve", lambda: _conflicts.resolve(
             self._session, conflict_id, action, valid_from=valid_from, valid_to=valid_to))
+
+    # -- sources and extraction ------------------------------------------------------------------
+
+    def source_add(self, *, adapter: str, config: dict, target: dict, **settings) -> dict:
+        """Register a source; extraction starts disabled. Settings: endpoint, model_id, cloud_allowed,
+        categories, redaction_rules, run_token_budget, day_token_budget, min_confidence."""
+        return self._call("source_add", lambda: _sources.add(self._session, adapter=adapter, config=config,
+                                                             target=target, **settings))
+
+    def source_update(self, source_id: str, **changes) -> dict:
+        return self._call("source_update", lambda: _sources.update(self._session, source_id, **changes))
+
+    def source_list(self) -> dict:
+        return self._call("source_list", lambda: _sources.list_sources(self._session))
+
+    def extract_plan(self, source_id: str) -> dict:
+        """The disclosure manifest and its SHA-256; nothing is sent anywhere."""
+        return self._call("extract_plan", lambda: _runs.plan_run(self._session, source_id))
+
+    def extract_ack(self, source_id: str, manifest_hash: str) -> dict:
+        return self._call("extract_ack", lambda: _runs.acknowledge(self._session, source_id, manifest_hash))
+
+    def extract_run(self, source_id: str, ack: str, *, model) -> dict:
+        """Run under an acknowledged manifest. A run stopped at a budget returns
+        extraction_budget_exceeded with the run summary in details; its candidates are kept."""
+        op = "extract_run"
+        try:
+            summary = _runs.run(self._session, source_id, ack=ack, model=model)
+        except RecallError as error:
+            return error_envelope(op, error)
+        except sqlite3.Error:
+            return error_envelope(op, RecallError("internal", "Unexpected storage error."))
+        if summary["status"] == "budget_stopped":
+            return error_envelope(op, RecallError("extraction_budget_exceeded", "The run stopped at its budget.",
+                                                  **summary))
+        return _ok(op, [summary])
+
+    def extract_cancel(self, run_id: str) -> dict:
+        return self._call("extract_cancel", lambda: _runs.cancel(self._session, run_id))
+
+    def extract_list(self, source_id: Optional[str] = None) -> dict:
+        return self._call("extract_list", lambda: _runs.list_runs(self._session, source_id))
 
     # -- lifecycle -------------------------------------------------------------------------------
 

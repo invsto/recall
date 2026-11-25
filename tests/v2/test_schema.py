@@ -153,7 +153,7 @@ class StoreFileTests(StoreTestCase):
         tables = {row["name"]: row["strict"] for row in db.execute("PRAGMA table_list")
                   if row["schema"] == "main" and row["type"] == "table"
                   and not row["name"].startswith(("sqlite_", "fts_items"))}
-        self.assertEqual(len(tables), 20)
+        self.assertEqual(len(tables), 22)
         self.assertTrue(all(tables.values()), tables)
         self.assertEqual(db.execute("SELECT value FROM meta WHERE name = 'estimator'").fetchone()[0], "bytes3-v1")
 

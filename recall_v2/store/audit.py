@@ -19,6 +19,8 @@ ACTIONS = frozenset({
     "principal_add", "principal_rotate", "principal_revoke", "project_add", "member_add", "member_remove",
     "save", "retract", "review_approve", "review_reject", "review_edit", "conflict_resolve", "delete", "migrate",
     "pin", "unpin",
+    "source_add", "source_update", "extract_plan", "extract_ack", "extract_start", "extract_chunk",
+    "extract_cancel", "extract_end",
 })
 
 

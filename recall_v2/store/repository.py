@@ -288,14 +288,18 @@ class Store:
             return {"item_id": item_id, "rev": latest["rev"]}
         return None
 
-    def _save(self, db, caller: str, req: model.SaveRequest, request_id: str, now: int) -> dict:
+    def _save(self, db, caller: str, req: model.SaveRequest, request_id: Optional[str], now: int, *,
+              actor: Optional[str] = None, candidate_only: bool = False) -> dict:
+        """Write one revision for `caller` (the item owner). `actor` defaults to the caller; extraction
+        passes its own actor ID and candidate_only=True, so its output is never accepted on write."""
+        actor = actor or caller
         if req.scope == "project" and not self._member(db, caller, req.project):
             raise RecallError("not_found", "No such project.")
         item = self._find_item(db, caller, req)
         current_rev = item["current_rev"] if item else 0
         if req.expected_revision is not None and req.expected_revision != current_rev:
             raise RecallError("conflict", "The revision has changed.", current_revision=current_rev)
-        state = model.state_on_write(req.scope)
+        state = "candidate" if candidate_only else model.state_on_write(req.scope)
         hashed = None if req.body is None else normalise.body_hash(req.body)
 
         if item is not None:
@@ -331,7 +335,7 @@ class Store:
             "INSERT INTO item_revisions (item_id, rev, state, title, body, body_hash, meta_json, valid_from, valid_to,"
             " actor_id, request_id, recorded_at, accepted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (item_id, rev, state, req.title, req.body, hashed, normalise.canonical_json(meta), valid_from, valid_to,
-             caller, request_id, now, accepted_at))
+             actor, request_id, now, accepted_at))
 
         if req.kind == "fact":
             revisions = [h for h, _ in history]
@@ -359,7 +363,7 @@ class Store:
         if state == "accepted":
             db.execute("UPDATE items SET current_rev = MAX(current_rev, ?) WHERE id = ?", (rev, item_id))
             self._fts_index(db, item_id, rev, req.kind)
-        audit.append(db, at=now, actor=caller, action="save", item_id=item_id, rev=rev, project_id=req.project)
+        audit.append(db, at=now, actor=actor, action="save", item_id=item_id, rev=rev, project_id=req.project)
         return {"item_id": item_id, "rev": rev}
 
     def retract(self, principal: Principal, *, item_id, rev, request_id, valid_from=None, valid_to=None) -> dict:

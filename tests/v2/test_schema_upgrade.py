@@ -1,4 +1,4 @@
-"""Schema version 11: a version-10 store upgrades in place; a fresh store has the same schema."""
+"""Schema upgrades: a version-10 store upgrades in place to the current version; a fresh store has the same schema."""
 from __future__ import annotations
 
 import unittest
@@ -34,14 +34,14 @@ class UpgradeTests(StoreTestCase):
         db.close()
 
     def test_version_10_store_upgrades(self):
-        self.assertEqual(USER_VERSION, 11)
+        self.assertEqual(USER_VERSION, 12)
         directory = self.private_dir()
         old = directory / "old.sqlite3"
         self.make_v10(old)
         store = Store.open(old, clock=lambda: T0 + 1)
         self.addCleanup(store.close)
         db = store.db
-        self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 11)
+        self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], USER_VERSION)
         self.assertEqual(db.execute("SELECT v FROM fts_items_config WHERE k = 'secure-delete'").fetchone()[0], 1)
         principal = store.authenticate("tok-alpha")
         [hit] = lookup(store, principal, query="narwhal")["results"]
@@ -51,7 +51,7 @@ class UpgradeTests(StoreTestCase):
         fresh = Store.open(directory / "fresh.sqlite3", create=True)
         self.addCleanup(fresh.close)
         self.assertEqual(schema_of(db), schema_of(fresh.db))
-        self.assertEqual(fresh.db.execute("PRAGMA user_version").fetchone()[0], 11)
+        self.assertEqual(fresh.db.execute("PRAGMA user_version").fetchone()[0], USER_VERSION)
 
     def test_failed_upgrade_rolls_back(self):
         directory = self.private_dir()

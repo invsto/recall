@@ -1,14 +1,16 @@
-"""Store schema (user_version 11) and its migrations.
+"""Store schema (user_version 12) and its migrations.
 
 Version 10 is the M1 layout. Version 11 adds what retrieval needs: an FTS5 vocabulary view for
 application-side BM25 over the caller's visible set, FTS5 secure-delete, and a (kind, key) index for
-fact-mode lookup. Every store is built by applying each step in order, so a fresh store and a migrated
-version-10 store end up identical.
+fact-mode lookup. Version 12 adds what opt-in extraction needs beside the section 7.8 `sources` and
+`extraction_runs` tables: per-source settings (off by default) and the disclosure manifests with their
+operator acknowledgements. Every store is built by applying each step in order, so a fresh store and a
+migrated older store end up identical.
 """
 from __future__ import annotations
 
 APPLICATION_ID = 0x52434F42
-USER_VERSION = 11
+USER_VERSION = 12
 
 SCHEMA_V10 = """
 CREATE TABLE principals (
@@ -259,6 +261,41 @@ INSERT INTO fts_items (fts_items, rank) VALUES ('secure-delete', 1);
 CREATE INDEX items_by_kind_key ON items (kind, key) WHERE key IS NOT NULL;
 """
 
+SCHEMA_V12 = """
+-- Extraction settings of one source (section 3.2). Extraction is off until `enabled` is set; the target
+-- is a principal's private scope or a project (candidates in a project are owned by owner_id, a member).
+CREATE TABLE source_settings (
+    source_id TEXT NOT NULL PRIMARY KEY REFERENCES sources(id),
+    enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+    scope_kind TEXT NOT NULL CHECK (scope_kind IN ('private', 'project')),
+    owner_id TEXT NOT NULL REFERENCES principals(id),
+    project_id TEXT REFERENCES projects(id),
+    endpoint TEXT,
+    model_id TEXT,
+    cloud_allowed INTEGER NOT NULL DEFAULT 0 CHECK (cloud_allowed IN (0, 1)),
+    categories_json TEXT NOT NULL,
+    redaction_json TEXT NOT NULL,
+    run_token_budget INTEGER NOT NULL DEFAULT 50000 CHECK (run_token_budget > 0),
+    day_token_budget INTEGER NOT NULL DEFAULT 200000 CHECK (day_token_budget > 0),
+    min_confidence REAL NOT NULL DEFAULT 0.5 CHECK (min_confidence >= 0 AND min_confidence <= 1),
+    adapter_config_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    CHECK ((scope_kind = 'project') = (project_id IS NOT NULL))
+) STRICT;
+
+-- Disclosure manifests (content-free: hashes and counts). A run needs the hash of the current
+-- manifest; the acknowledgement is stored with its time.
+CREATE TABLE extraction_manifests (
+    manifest_hash BLOB NOT NULL PRIMARY KEY CHECK (length(manifest_hash) = 32),
+    source_id TEXT NOT NULL REFERENCES sources(id),
+    manifest_json TEXT NOT NULL,
+    planned_at INTEGER NOT NULL,
+    acknowledged_at INTEGER
+) STRICT;
+
+CREATE INDEX extraction_runs_by_source ON extraction_runs (source_id, started_at);
+"""
+
 # version -> DDL that brings a store from the previous version to this one.
-MIGRATIONS = {10: SCHEMA_V10, 11: SCHEMA_V11}
+MIGRATIONS = {10: SCHEMA_V10, 11: SCHEMA_V11, 12: SCHEMA_V12}
 FIRST_VERSION = 10
