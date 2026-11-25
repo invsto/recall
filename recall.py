@@ -2627,9 +2627,9 @@ def main(argv=None):
     )
     sub = ap.add_subparsers(dest="cmd")
 
-    from recall_core import openbot_cli
+    from recall_core.service import cli as service_cli
 
-    openbot_cli.add_parser(sub)
+    service_cli.add_parser(sub)
 
     pi = sub.add_parser("index", help="build/update the index")
     pi.add_argument("-s", "--semantic", action="store_true", help="also build embeddings")
@@ -2778,7 +2778,7 @@ def main(argv=None):
     }
     if len(argv) >= 2 and argv[0] == "context" and argv[1] not in context_commands:
         argv = ["context", "show", *argv[1:]]
-    commands = ("index", "search", "recent", "graph", "go", "tui", "context", "openbot", "-h", "--help")
+    commands = ("index", "search", "recent", "graph", "go", "tui", "context", "service", "openbot", "-h", "--help")
     if argv and argv[0] not in commands:
         argv = ["search", *argv]
     args = ap.parse_args(argv)
@@ -2789,8 +2789,8 @@ def main(argv=None):
         go(args)
         return
 
-    if args.cmd == "openbot":
-        if code := openbot_cli.run(args):
+    if args.cmd in ("service", "openbot"):
+        if code := service_cli.run(args):
             raise SystemExit(code)
         return
 

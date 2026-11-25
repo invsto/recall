@@ -1,0 +1,40 @@
+{
+  "server_name": "recall-service",
+  "tools": [
+    {
+      "name": "recall_checkpoint_get",
+      "description": "Read the current private checkpoint or a retained revision for this bot.",
+      "input_schema_sha256": "313b1dec03ab38ff8db9a1eaaf6a70f9c449f2cac31f91975755e491487db6da"
+    },
+    {
+      "name": "recall_checkpoint_save",
+      "description": "Replace this bot's private checkpoint with the expected revision and a stable request ID.",
+      "input_schema_sha256": "7b74aa06a2548f5f177bd3aa0e2f9ff6d90c094ec76612e03ce4172b4354b5f6"
+    },
+    {
+      "name": "recall_brief_get",
+      "description": "Read the current accepted project brief, including Markdown and review provenance.",
+      "input_schema_sha256": "da69a446bfda488be3d6d5958486a16e3e39ef6f9e2a1681ccd290408d5492fd"
+    },
+    {
+      "name": "recall_excerpt_get",
+      "description": "Read the current accepted excerpt and its explicit source reference.",
+      "input_schema_sha256": "da69a446bfda488be3d6d5958486a16e3e39ef6f9e2a1681ccd290408d5492fd"
+    },
+    {
+      "name": "recall_brief_propose",
+      "description": "Submit structured Recall Markdown for operator review. This does not publish it.",
+      "input_schema_sha256": "7f92a654aa96af6460f517696f866a40a7d0197eba898899268b7a4f6bde5531"
+    },
+    {
+      "name": "recall_excerpt_propose",
+      "description": "Submit a short verbatim excerpt and its HTTPS source for separate operator review.",
+      "input_schema_sha256": "ba6e8110d9fa447e9b30816693a90ae7c6b283c2b030576c03d5571ba2fcc7aa"
+    },
+    {
+      "name": "recall_project_search",
+      "description": "Find this bot's current checkpoints and accepted items in its projects. Results contain references only.",
+      "input_schema_sha256": "4678f875a86d84adb14c2dbb61fcdd99a9861422c65589f9bbfdb19e5bde5c23"
+    }
+  ]
+}

@@ -31,7 +31,7 @@
     "docs/*.svg",
     "docs/recall-demo.gif",
     "docs/recall-demo.tape",
-    "skills/openbot-recall/SKILL.md",
+    "recall_adapters/platforms/openbot/skills/openbot-recall/SKILL.md",
     "README.md"
   ],
   "scripts": {

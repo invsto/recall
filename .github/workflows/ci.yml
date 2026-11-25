@@ -28,9 +28,12 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Check neutral core
+        run: python3 scripts/ci/neutral_core.py
+
       - name: Run Python tests
         run: |
-          python3 -m pip install -e '.[openbot]'
+          python3 -m pip install -e '.[service]'
           python3 -m unittest -v
 
       - name: Compile Python module
