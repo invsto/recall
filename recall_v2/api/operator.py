@@ -18,6 +18,12 @@ from ..extraction import sources as _sources
 from ..governance import conflicts as _conflicts
 from ..governance import review as _review
 from ..governance.authority import open_session
+from ..lifecycle import backup as _backup
+from ..lifecycle import deletion as _deletion
+from ..lifecycle import doctor as _doctor
+from ..lifecycle import expiry as _expiry
+from ..lifecycle import export as _export
+from ..lifecycle import retention as _retention
 from ..retrieval.envelope import error_envelope
 from ..store.repository import Store
 
@@ -167,3 +173,57 @@ class Operator:
 
     def audit_verify(self) -> dict:
         return self._call("audit_verify", self._store.verify_audit)
+
+    def expire_item(self, item_id: str, *, at=None) -> dict:
+        """Policy expiry: an accepted revision that ends the item's validity at `at` (default now)."""
+        return self._call("expire_item", lambda: _expiry.expire_item(self._session, item_id, at))
+
+    def expire_check(self) -> dict:
+        """Every live item expired now; lists only, deletes nothing."""
+        return self._call("expire_check", lambda: _expiry.expire_check(self._session))
+
+    def delete(self, item_id: str) -> dict:
+        """Erase an item. `results` = [tombstone ITEM]; the envelope also carries `not_guaranteed` and the
+        registered backups and exports (`artifacts`) that predate the deletion and still hold its content."""
+        op = "delete"
+        try:
+            out = _deletion.delete(self._session, item_id)
+        except RecallError as error:
+            return error_envelope(op, error)
+        except sqlite3.Error:
+            return error_envelope(op, RecallError("internal", "Unexpected storage error."))
+        envelope = _ok(op, [out["tombstone"]])
+        envelope["not_guaranteed"] = out["not_guaranteed"]
+        envelope["artifacts"] = out["artifacts"]
+        return envelope
+
+    def source_delete(self, source_id: str, *, cascade: bool = False) -> dict:
+        return self._call("source_delete", lambda: _deletion.source_delete(self._session, source_id,
+                                                                           cascade=cascade))
+
+    def maintain(self) -> dict:
+        """Retention, artifact pruning, FTS optimize and VACUUM. Idempotent."""
+        return self._call("maintain", lambda: _retention.maintenance(self._session))
+
+    def backup(self, *, path: Optional[str] = None, directory: Optional[str] = None, prune: bool = False) -> dict:
+        def run():
+            result = _backup.backup(self._session, path=path, directory=directory)
+            if prune:
+                result["pruned"] = _backup.backup_prune(self._session)["pruned"]
+            return result
+        return self._call("backup", run)
+
+    def backup_prune(self) -> dict:
+        return self._call("backup_prune", lambda: _backup.backup_prune(self._session))
+
+    def restore(self, backup: str, *, to: str, no_ledger: bool = False) -> dict:
+        return self._call("restore", lambda: _backup.restore(self._session, backup, to, no_ledger=no_ledger))
+
+    def export(self, *, project: Optional[str] = None, principal: Optional[str] = None, path: Optional[str] = None,
+               directory: Optional[str] = None) -> dict:
+        return self._call("export", lambda: _export.export(self._session, project=project, principal=principal,
+                                                           path=path, directory=directory))
+
+    def doctor(self) -> dict:
+        """Read-only health report (a JSON-serialisable dict with a fixed key order)."""
+        return self._call("doctor", lambda: _doctor.doctor(self._session))

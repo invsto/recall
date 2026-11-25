@@ -21,6 +21,7 @@ ACTIONS = frozenset({
     "pin", "unpin",
     "source_add", "source_update", "extract_plan", "extract_ack", "extract_start", "extract_chunk",
     "extract_cancel", "extract_end",
+    "expire", "source_delete", "backup", "backup_prune", "restore", "export", "export_prune", "retention_prune",
 })
 
 

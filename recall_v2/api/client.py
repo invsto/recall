@@ -21,6 +21,8 @@ from typing import Optional, Union
 from .. import SCHEMA_VERSION
 from ..core import timefmt
 from ..core.errors import RecallError
+from ..lifecycle import deletion as _deletion
+from ..lifecycle import expiry as _expiry
 from ..retrieval import bundle as _bundle
 from ..retrieval import lookup as _lookup
 from ..retrieval.candidates import COLUMNS, enrich
@@ -116,6 +118,25 @@ class Client:
                                          valid_from=valid_from, valid_to=valid_to)
             return self._saved("retract", result)
         return self._call("retract", run)
+
+    def expire(self, *, item_id, request_id, at=None) -> dict:
+        """End a visible item's validity at `at` (default now) with a new revision: accepted in the
+        caller's private scope, a candidate for review in a project. `results` = [saved ITEM]."""
+        def run():
+            result = _expiry.expire_as(self._store, self._principal, item_id=item_id, request_id=request_id, at=at)
+            return self._saved("expire", result)
+        return self._call("expire", run)
+
+    def forget(self, *, item_id, request_id) -> dict:
+        """Delete an item the caller owns (private scope) or a project item made only of candidates it
+        authored. `results` = [tombstone ITEM]; `not_guaranteed` lists what deletion cannot promise."""
+        def run():
+            out = _deletion.forget(self._store, self._principal, item_id=item_id, request_id=request_id)
+            envelope = self._items_envelope("forget", [out["tombstone"]], self._store.clock())
+            envelope["not_guaranteed"] = out["not_guaranteed"]
+            envelope["artifacts_predating"] = out["artifacts_predating"]
+            return envelope
+        return self._call("forget", run)
 
     # -- reads -----------------------------------------------------------------------------------
 

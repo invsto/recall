@@ -1,6 +1,6 @@
 """Store maintenance: compact the FTS index and rewrite the file so deleted content leaves the live store.
 
-This is the storage part of `recall maintain`; retention and pruning arrive with the lifecycle milestone.
+This is the storage part of `recall maintain`; retention and pruning live in lifecycle.retention.
 """
 from __future__ import annotations
 

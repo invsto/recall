@@ -14,7 +14,7 @@ from typing import Callable, Optional
 from ..core import model, normalise, timefmt, validity
 from ..core.errors import RecallError, invalid
 from ..governance import dedupe
-from . import audit, embeddings, receipts
+from . import audit, embeddings, erasure, receipts
 from .connection import (check_engine, check_private, create_file, initialise, raw_connect, read_transaction,
                          write_transaction)
 from .visibility import visible_items, visible_revisions
@@ -521,28 +521,14 @@ class Store:
         return self._review(item_id, rev, "rejected", reviewer, note)
 
     def delete_item(self, item_id: str) -> dict:
-        """Operator deletion: null content, tombstone the item, drop FTS rows, receipts and pins, record an erasure."""
+        """Operator deletion (section 6): see store.erasure. Returns {"item_id", "rev", "at"}."""
         with write_transaction(self.db) as db:
-            now = self.clock()
-            item = db.execute("SELECT * FROM items WHERE id = ? AND deleted_at IS NULL", (item_id,)).fetchone()
-            if item is None:
-                raise RecallError("not_found", "No such item.")
-            db.execute("DELETE FROM fts_items WHERE rowid IN (SELECT rowid FROM item_revisions WHERE item_id = ?)",
-                       (item_id,))
-            db.execute("UPDATE item_revisions SET title = NULL, body = NULL, meta_json = NULL, body_hash = NULL"
-                       " WHERE item_id = ?", (item_id,))
-            db.execute("UPDATE fact_versions SET subject = NULL, predicate = NULL, value_json = NULL WHERE item_id = ?",
-                       (item_id,))
-            db.execute("UPDATE items SET key = NULL, deleted_at = ? WHERE id = ?", (now, item_id))
-            db.execute("DELETE FROM receipts WHERE item_id = ?", (item_id,))
-            db.execute("DELETE FROM pins WHERE item_id = ?", (item_id,))
-            db.execute("DELETE FROM embeddings WHERE item_id = ?", (item_id,))
-            last_rev = db.execute("SELECT COALESCE(MAX(rev), 0) FROM item_revisions WHERE item_id = ?",
-                                  (item_id,)).fetchone()[0]
-            db.execute("INSERT OR REPLACE INTO erasures (item_id, rev, at) VALUES (?, ?, ?)", (item_id, last_rev, now))
-            audit.append(db, at=now, actor=model.OPERATOR_ACTOR, action="delete", item_id=item_id, rev=last_rev,
-                         project_id=item["project_id"])
-            return {"item_id": item_id, "rev": last_rev}
+            return erasure.erase_in(db, item_id, self.clock(), model.OPERATOR_ACTOR, self.ledger_path)
+
+    @property
+    def ledger_path(self) -> Path:
+        """The sidecar erasure ledger beside the store file."""
+        return erasure.ledger_path(self.path)
 
     # -- reads (all through visible_items / visible_revisions) -----------------------------------
 
