@@ -9,7 +9,8 @@ On a trusted host, install from the checkout into a virtual environment. Use a d
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install -e '.[openbot]'
+python -m pip install -e '.[service]'
+# or, from the release wheel: python -m pip install 'recallhq-0.7.0-py3-none-any.whl[service]'
 
 umask 077
 recall_db=/absolute/private/state/openbot.sqlite3
@@ -24,24 +25,24 @@ By default the MCP endpoint is `http://127.0.0.1:8765/mcp`. The readiness route 
 
 For a separate host, put the loopback listener behind a trusted HTTPS reverse proxy in the same network namespace, restrict inbound network access, and forward `Authorization` unmodified. Use an exact `--allowed-host` entry when the proxy preserves a different Host header. Browser origins are rejected unless explicitly added with `--allowed-origin`. Treat the proxy as trusted infrastructure. Disable access and body/header logs that could record credentials or content, and turn off caching for the endpoint. Mount the database, backups, and operator executable or shell under the service identity. An agent with that identity or readable access to those files can bypass the service permissions.
 
-## Provision OpenBot agents
+## Provision the shared service
 
-Create a project and one credential per agent. `bot-add` and `bot-rotate` return the plaintext token once in JSON. Capture it in a private operator file or secret manager. For example, with an existing private directory and `umask 077`:
+The server has one shared credential, used by every OpenBot bot through one MCP entry. Each bot gets its own memory inside Recall, selected by a `bot` argument that the caller supplies on every call.
 
 ```sh
-recall openbot --db "$recall_db" bot-add pilot-alpha > /absolute/private/alpha-credential.json
-recall openbot --db "$recall_db" bot-add pilot-beta > /absolute/private/beta-credential.json
-recall openbot --db "$recall_db" bot-add pilot-outsider > /absolute/private/outsider-credential.json
+recall openbot --db "$recall_db" bot-add shared-service > /absolute/private/service-credential.json
 recall openbot --db "$recall_db" project-add pilot-project
 recall openbot --db "$recall_db" member-grant pilot-project pilot-alpha
 recall openbot --db "$recall_db" member-grant pilot-project pilot-beta
 ```
 
-In OpenBot, configure one remote MCP server entry per bot. Use type **HTTP**, the exact endpoint URL, a per-agent access list containing that agent alone, and the custom header `Authorization` with value `Bearer <that bot's token>`. Apply the [optional bot workflow skill](skills/openbot-recall/SKILL.md) through your usual skill setup. Keep credentials in OpenBot's protected configuration and the operator's secure storage. Use a short-lived synthetic credential to prove the configuration, then revoke it.
+`bot-add` prints the token once in JSON. Put it in OpenBot's protected MCP configuration and the operator's secure storage, and nowhere else. In OpenBot, add one remote MCP server entry: type **HTTP**, the exact endpoint URL, and the header `Authorization` with value `Bearer <shared token>`. Apply the [optional bot workflow skill](skills/openbot-recall/SKILL.md) through your usual skill setup.
 
-An access list controls which provider sessions receive an MCP entry. Static authentication headers follow the provider handoff path. Check the actual OpenBot host and every provider/runtime you plan to use. Confirm that each agent's shell, provider configuration, and MCP management tools cannot enumerate, read, or change another bot's credential headers. The upstream architecture describes separate permissions for MCP management. Access to another token is equivalent to access as that bot. [OpenBot integration architecture](https://github.com/nightly-labs/openbot/blob/main/docs/architecture/integrations.md#who-gets-each-mcp-server)
+Every tool call must include `bot`, the calling bot's name: 1–64 letters, digits, dots, underscores, or hyphens. Under the shared credential, a call without `bot` fails with `invalid_input`. Any other credential refuses `bot`, so a bot cannot switch names with a private token.
 
-`bot-rotate BOT` instantly invalidates the previous token and issues a new one. Update only the matching agent entry. `bot-revoke BOT` disables its token while keeping its context. `member-revoke PROJECT BOT` ends shared reads, search access, and proposals in that project, and discards that bot's pending proposals there. The bot's own checkpoints, including a checkpoint with that project key, remain private to it. Use `inventory` and `member-list PROJECT` to check current access configuration.
+**Trust boundary.** The bot name is supplied by the caller and is not proven by the server. Any bot that holds the shared token can use any bot name. Separation between bots therefore depends on each bot using its own name and on who can read OpenBot's configuration. Keep the shared token out of shared folders, chat, and logs.
+
+Rotate or disable the shared credential with `principal-rotate shared-service` and `principal-revoke shared-service`. Use `inventory` and `member-list PROJECT` to check access. `member-revoke PROJECT BOT` ends that bot name's shared reads, search access, and proposals in the project, and discards its pending proposals there.
 
 ## Tool contracts
 
@@ -79,16 +80,14 @@ Set an explicit retention cadence and record the day limits before storing real 
 - Search reads current content in place with SQLite scope indexes. Removing a revision removes its text from search and leaves no separate searchable text index. Slot markers retain the opaque identifiers and revision so intentional recreation requires the latest number. SQLite overwrites deleted database content where its secure deletion setting applies. Treat filesystems with snapshots or copy-on-write as separate retained copies.
 - Check `audit` for credential and membership changes, successful writes, reviews, deletion and pruning metadata. The audit trail holds action, actor, time, and applicable IDs and revision numbers. It contains no tokens, excerpts, queries, or document bodies.
 - Take backups with `recall openbot --db "$recall_db" backup /absolute/private/backups/snapshot.sqlite3`. Use a separate encrypted, access-controlled volume and give each backup an expiry. SQLite makes a consistent snapshot while the service is running. Recall clears its credential digests in the copy.
-- Use `recall openbot --db /absolute/private/recovery/openbot.sqlite3 restore /absolute/private/backups/snapshot.sqlite3` for a new recovery store. Keep this store off the network while checking health, reconciling membership changes and deletions since the snapshot, and rotating tokens for each approved bot. Every credential stays disabled after restore until explicitly rotated.
+- Use `recall openbot --db /absolute/private/recovery/openbot.sqlite3 restore /absolute/private/backups/snapshot.sqlite3` for a new recovery store. Keep this store off the network while checking health, reconciling membership changes and deletions since the snapshot, and rotating the shared credential. Every credential stays disabled after restore until explicitly rotated.
 - Keep a protected inventory of backups and exports with owners, retention deadlines, and any erasure records needed after a restore. Deleting live rows does not delete historical backups, retained provider data, previously returned copies, or exports. Include those surfaces in the organization's deletion process.
 
 ## Pilot and rollout
 
-1. Run `python -m unittest -v tests.test_openbot` with the optional extra installed. The tests run a real local listener with two synthetic members and an outsider, and cover persistence, spoofed identity, competing saves, review, scoped search, rotation, revocation, deletion, restore, and transport limits.
+1. Run `python -m unittest -v tests.test_openbot` with the optional extra installed. The tests run a real local listener with two synthetic members and an outsider, and cover persistence, spoofed identity, competing saves, review, scoped search, rotation, revocation, deletion, restore, transport limits, and the shared-credential bot argument.
 2. With deployment approval, repeat discovery, write/read, review, denial, revocation, backup, and restart checks using three dedicated synthetic OpenBot agents through the actual provider. Verify credential and filesystem isolation as described above. Check row capacity before onboarding. Upstream documents 32 entries on older clients and 100 with the `mcp-many-servers-v1` capability. Existing MCP entries count toward the same limit. [OpenBot server limits](https://github.com/nightly-labs/openbot/blob/main/docs/architecture/integrations.md)
-3. After pilot acceptance, onboard the 23 intended bots in batches of 3, 7, and 13. Pause between batches to verify tool discovery, allowed project access, private checkpoint denials, credential revocation, readiness and response errors. Use only context explicitly approved for each bot, its project audience, and its provider.
-4. On an isolation failure, remove the affected OpenBot entries, revoke the corresponding tokens, and stop the listener if necessary. Keep the store isolated for diagnosis. If restoring an older snapshot, reconcile changes before reconnecting and rotate every enabled token. Existing Recall search and context commands are available during rollback.
+3. After pilot acceptance, onboard the intended bots in batches of 3, 7, and 13. The shared credential serves them all, so each batch only adds bot names. Pause between batches to verify tool discovery, allowed project access, private checkpoint denials, and readiness and response errors. Use only context explicitly approved for each bot, its project audience, and its provider.
+4. On an isolation failure, remove the OpenBot entry that holds the shared credential, rotate that credential with `principal-rotate shared-service`, and stop the listener if necessary. Keep the store isolated for diagnosis. If restoring an older snapshot, reconcile changes before reconnecting and rotate the shared credential. Existing Recall search and context commands are available during rollback.
 
 Transcript import requires separate approval and a verified OpenBot export and retention workflow. The service accepts concise checkpoints and explicitly selected and reviewed project content.
-
-See the [implementation plan](openbot-plan.md) for the public seams and rollout acceptance.
