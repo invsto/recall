@@ -12,7 +12,7 @@ Recall indexes your coding-agent sessions in SQLite so you can rediscover past w
 - Searches with fuzzy matching, regular expressions, or optional local semantic search.
 - Browses recent conversations and resumes supported sessions.
 - Preserves reusable project context as plain Markdown context banks.
-- Offers an optional service for private checkpoints and reviewed project briefs.
+- Offers an optional MCP server (`recall_v2`) for per-bot memory behind one shared token.
 - Runs as a standalone Python CLI or as an extension inside Pi.
 
 ## Local by default
@@ -55,7 +55,7 @@ You can also install the `recall` command from this checkout. See the [usage gui
 
 ### Service
 
-Install `.[service]` to run the MCP service for private checkpoints and reviewed project briefs or excerpts. The service uses a separate SQLite store and a distinct credential per principal. Check isolation and the server's capacity before connecting agents. See the [platform adapter runbook](recall_adapters/platforms/openbot/openbot.md).
+Install `.[v2]` to run the MCP server: `python -m recall_v2 --store PATH serve`. One shared token serves all bots; each tool call names its bot in a `bot` argument, and each bot's memory stays separate. See the [OpenBot runbook](recall_adapters/platforms/openbot/openbot.md). <!-- neutral-core: allow -->
 
 ## Knowledge graphs
 

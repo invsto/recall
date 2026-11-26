@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "recallhq"
-version = "0.7.0"
+version = "0.8.0"
 description = "A local knowledge base built from Claude Code, Codex, OpenCode, Pi, and ChatGPT conversations"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,11 +25,8 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-service = ["mcp>=1.30,<2"]
-# Recall v2 MCP server (python -m recall_v2 mcp / serve).
+# Recall MCP server (python -m recall_v2 serve).
 v2 = ["mcp>=1.30,<2"]
-# Deprecated alias for one release; use the "service" extra.
-openbot = ["mcp>=1.30,<2"]
 semantic = [
   "fastembed>=0.3",
   "numpy>=1.24",
@@ -42,7 +39,6 @@ recall = "recall:main"
 py-modules = ["recall"]
 packages = [
   "recall_core",
-  "recall_core.service",
   "recall_v2",
   "recall_v2.adapters",
   "recall_v2.api",

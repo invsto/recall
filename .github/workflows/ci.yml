@@ -33,7 +33,7 @@ jobs:
 
       - name: Run Python tests
         run: |
-          python3 -m pip install -e '.[service]'
+          python3 -m pip install -e '.[v2]'
           python3 -m unittest -v
 
       - name: Compile Python module

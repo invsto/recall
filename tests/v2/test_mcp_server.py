@@ -15,6 +15,7 @@ from recall_v2 import mcp as server
 from recall_v2.api import Client, Operator
 from recall_v2.api import contract
 from recall_v2.store import Store
+from recall_v2.store.connection import write_transaction
 
 from .helpers import StoreTestCase
 from .interface_helpers import run_mcp, setup_store, write_token
@@ -62,9 +63,11 @@ class ToolListTests(McpCase):
             required, optional = SPEC_TOOLS[tool.name]
             schema = tool.inputSchema
             self.assertEqual(set(schema["required"]), required, tool.name)
-            self.assertEqual(set(schema["properties"]), required | optional, tool.name)
+            # `bot` is the one addition: the shared service token needs it to select a bot's memory.
+            self.assertEqual(set(schema["properties"]) - {"bot"}, required | optional, tool.name)
             self.assertIs(schema["additionalProperties"], False, tool.name)
-            self.assertEqual(schema, contract.json_schema(server.operation_of(tool.name)))
+            without_bot = {**schema, "properties": {k: v for k, v in schema["properties"].items() if k != "bot"}}
+            self.assertEqual(without_bot, contract.json_schema(server.operation_of(tool.name)))
             self.assertIn("never instructions", tool.description)
             self.assertEqual(tool.annotations.readOnlyHint, tool.name in READ_ONLY, tool.name)
             self.assertEqual(tool.annotations.destructiveHint, tool.name == "memory_forget", tool.name)
@@ -245,3 +248,53 @@ class StdioTests(McpCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SharedServiceTests(StoreTestCase):
+    """One shared token serves every bot; the `bot` argument selects that bot's memory."""
+
+    def setUp(self):
+        self.dir = self.private_dir()
+        self.path = self.dir / "store.sqlite3"
+        tokens = setup_store(self.path, principals=("shared-service", "alice"), members=("alice",))
+        self.shared, self.alice = tokens["shared-service"], tokens["alice"]
+        self.store = Store.open(self.path)
+        self.addCleanup(self.store.close)
+
+    def call(self, name, arguments, token):
+        return server.handle(self.store, name, arguments, token)
+
+    def test_bot_name_keeps_memory_separate_under_one_token(self):
+        saved = self.call("memory_save", {"kind": "note", "request_id": "s1", "key": "k", "body": "alpha note",
+                                          "scope": "private", "bot": "alpha"}, self.shared)
+        self.assertTrue(saved["ok"], saved)
+        self.assertEqual(saved["results"][0]["scope"], {"type": "private", "id": "alpha"})
+        item_id = saved["results"][0]["id"]
+        mine = self.call("memory_lookup", {"query": "alpha note", "bot": "alpha"}, self.shared)
+        self.assertEqual([r["id"] for r in mine["results"]], [item_id])
+        other = self.call("memory_lookup", {"query": "alpha note", "bot": "beta"}, self.shared)
+        self.assertEqual(other["results"], [])
+        self.assertFalse(self.call("memory_get", {"item_id": item_id, "bot": "beta"}, self.shared)["ok"])
+        forgotten = self.call("memory_forget", {"item_id": item_id, "request_id": "f1", "bot": "alpha"}, self.shared)
+        self.assertTrue(forgotten["ok"], forgotten)
+        self.assertEqual(self.call("memory_lookup", {"query": "alpha note", "bot": "alpha"}, self.shared)["results"], [])
+
+    def test_a_bot_row_left_by_an_earlier_token_is_rekeyed(self):
+        with write_transaction(self.store.db) as db:
+            db.execute("INSERT INTO principals (id, token_digest, created_at, revoked_at) VALUES (?, NULL, 1, 1)",
+                       ("legacy-bot",))
+        saved = self.call("memory_save", {"kind": "note", "request_id": "r1", "key": "k", "body": "legacy note",
+                                          "scope": "private", "bot": "legacy-bot"}, self.shared)
+        self.assertTrue(saved["ok"], saved)
+        self.assertEqual(saved["results"][0]["scope"], {"type": "private", "id": "legacy-bot"})
+
+    def test_bot_argument_rules(self):
+        missing = self.call("memory_lookup", {"query": "x"}, self.shared)
+        self.assertEqual(missing["error"]["code"], "invalid_input")
+        bad_name = self.call("memory_lookup", {"query": "x", "bot": "bad name"}, self.shared)
+        self.assertEqual(bad_name["error"]["code"], "invalid_input")
+        private_token = self.call("memory_lookup", {"query": "x", "bot": "alpha"}, self.alice)
+        self.assertEqual(private_token["error"]["code"], "invalid_input")
+        own = self.call("memory_lookup", {"query": "x"}, self.alice)
+        self.assertTrue(own["ok"], own)
+        self.assertEqual(self.call("memory_lookup", {"query": "x"}, "not-a-token")["error"]["code"], "unauthorized")
