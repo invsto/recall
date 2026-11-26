@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "recallhq"
-version = "0.8.0"
-description = "A local knowledge base built from Claude Code, Codex, OpenCode, Pi, and ChatGPT conversations"
+version = "0.8.1"
+description = "Local memory for AI agents over MCP, and a searchable archive of coding-agent conversations"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

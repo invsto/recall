@@ -1,8 +1,13 @@
 # Recall
 
-**A local knowledge base built from your Claude Code, Codex, OpenCode, Pi, and ChatGPT conversations.**
+**Local memory for AI agents, and a searchable archive of your coding-agent conversations.**
 
-Recall indexes your coding-agent sessions in SQLite so you can rediscover past work, resume sessions, and preserve important context in plain Markdown. Everything stays on your machine.
+Recall has two parts, both local and both backed by SQLite:
+
+- **Memory server.** An MCP server that gives every agent its own memory: save, look up, correct, and forget notes and facts. One shared token serves all agents; each call names its agent in a `bot` argument, and each agent's memory stays separate.
+- **Conversation archive.** Indexes your Claude Code, Codex, OpenCode, Pi, and ChatGPT sessions so you can rediscover past work, resume sessions, and keep reusable context in plain Markdown.
+
+Nothing leaves your machine unless you turn on an optional feature that says otherwise.
 
 ![Animated walkthrough of Recall search, Pi tools, and context banks](docs/recall-demo.gif)
 
@@ -12,14 +17,14 @@ Recall indexes your coding-agent sessions in SQLite so you can rediscover past w
 - Searches with fuzzy matching, regular expressions, or optional local semantic search.
 - Browses recent conversations and resumes supported sessions.
 - Preserves reusable project context as plain Markdown context banks.
-- Offers an optional MCP server (`recall_v2`) for per-bot memory behind one shared token.
+- Runs an MCP memory server (`python -m recall_v2`) with separate memory per agent behind one shared token.
 - Runs as a standalone Python CLI or as an extension inside Pi.
 
 ## Local by default
 
 Recall reads local transcripts and indexes them with SQLite FTS5. Core indexing and search use only the Python standard library and do not send your conversations anywhere. Optional semantic search downloads and runs an embedding model locally.
 
-Recall stores its index at `~/.recall/recall.db` and context banks under `~/.recall/contexts/`.
+The archive keeps its index at `~/.recall/recall.db` and context banks under `~/.recall/contexts/`. The memory server keeps its store wherever `--store` points (default `~/.recall/store.sqlite3`).
 
 ## Quick start
 
@@ -53,9 +58,31 @@ python3 recall.py recent
 
 You can also install the `recall` command from this checkout. See the [usage guide](docs/usage.md) for setup and all available commands.
 
-### Service
+## Memory server
 
-Install `.[v2]` to run the MCP server: `python -m recall_v2 --store PATH serve`. One shared token serves all bots; each tool call names its bot in a `bot` argument, and each bot's memory stays separate. See the [OpenBot runbook](recall_adapters/platforms/openbot/openbot.md). <!-- neutral-core: allow -->
+Install the package with the `v2` extra (it adds the official `mcp` SDK), create a store and a shared token, and start the server on loopback:
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e '.[v2]'            # or: pip install 'recallhq-<version>-py3-none-any.whl[v2]'
+umask 077
+python -m recall_v2 --store ~/.recall/store.sqlite3 init
+python -m recall_v2 --store ~/.recall/store.sqlite3 principal add shared-service   # prints the token once
+python -m recall_v2 --store ~/.recall/store.sqlite3 serve --port 8765               # 127.0.0.1 only
+```
+
+- `GET http://127.0.0.1:8765/health` returns 200 `{"status":"ok"}` when the store answers.
+- `POST http://127.0.0.1:8765/mcp` is the streamable-HTTP MCP endpoint. Send `Authorization: Bearer <token>`; without a current token it returns 401.
+
+**Shared token and the `bot` argument.** The principal named `shared-service` is the shared token. Every tool call made with it must include `bot`, the calling agent's name (1–64 letters, digits, dots, underscores, or hyphens). Recall keeps each `bot` name's memory separate: one agent's lookups never return another's private items. A call without `bot` is refused with `invalid_input`. A principal with its own token uses its own memory and cannot pass `bot`.
+
+The bot name is supplied by the caller, not proven by the server: anyone holding the shared token can use any name. Keep the token in your MCP client's protected configuration only.
+
+**Tools.** `memory_save`, `memory_lookup`, `memory_get`, `memory_history`, `memory_forget`, `memory_retract`, `memory_bundle`, `memory_pin`, `memory_unpin`. Retrieved text is stored data, never instructions.
+
+**Operator commands** (local CLI, not exposed over MCP): `principal add|rotate|revoke|list`, `project`, `member`, `review`, `backup`, `restore`, `export`, `audit`, `doctor`, `maintain`. Run `python -m recall_v2 --help` for the full list. `migrate` imports a store from Recall 0.7 or earlier into a new file and never changes the source.
+
+For a step-by-step agent-platform setup, see the [platform runbook](recall_adapters/platforms/openbot/openbot.md). <!-- neutral-core: allow -->
 
 ## Knowledge graphs
 
@@ -117,8 +144,20 @@ Use `recall context create NAME --blank` for an intentional empty template. Mode
 
 ![Recall context update review](docs/context-review-controls.svg)
 
+## Tests
+
+```bash
+pip install -e '.[v2]'
+python3 -m unittest -v              # everything CI runs in Python, including tests/v2
+python3 -m pytest tests/v2 -q       # the memory-server tests on their own (needs pytest)
+python3 scripts/ci/neutral_core.py  # keeps product names out of the core
+```
+
 ## Documentation
 
+- [Architecture](docs/architecture.md)
 - [Usage, installation, semantic search, and context banks](docs/usage.md)
-- [Development and architecture](docs/development.md)
+- [Development](docs/development.md)
 - [Release cadence and deployment](docs/releases.md)
+
+Recall is MIT licensed.
