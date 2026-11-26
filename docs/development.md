@@ -30,13 +30,14 @@ Do not copy only `extensions/recall/index.ts` into an installed npm package. Rec
 
 ## Tests
 
-Run the Python test suite:
+Run the Python test suite (CI runs the same command):
 
 ```bash
+pip install -e '.[v2]'
 python3 -m unittest -v
 ```
 
-Install `.[v2]` to include the MCP server tests and the [OpenBot runbook](../recall_adapters/platforms/openbot/openbot.md) in local runs. GitHub CI installs this extra. <!-- neutral-core: allow -->
+Run only the memory-server tests with `python3 -m pytest tests/v2 -q`.
 
 ## Retrieval evaluation
 
@@ -75,6 +76,8 @@ npx tsc --project tsconfig.recall.json
 ```
 
 ## Architecture
+
+See [architecture](architecture.md) for the overview. The conversation archive is described in more detail here.
 
 The `recall.py` module and CLI remain the compatibility facade. The data lifecycle is separated into focused modules:
 

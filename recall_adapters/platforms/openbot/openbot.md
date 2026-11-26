@@ -7,7 +7,7 @@ One Recall server holds memory for every OpenBot bot. Each bot's memory is separ
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install 'recallhq-0.8.0-py3-none-any.whl[v2]'   # or: python -m pip install -e '.[v2]' from a checkout
+python -m pip install 'recallhq-<version>-py3-none-any.whl[v2]'   # or: python -m pip install -e '.[v2]' from a checkout
 umask 077
 store=/absolute/private/recall-service/state/memory.sqlite3
 python -m recall_v2 --store "$store" init
@@ -15,7 +15,7 @@ python -m recall_v2 --store "$store" principal add shared-service   # prints the
 python -m recall_v2 --store "$store" serve --port 8765               # loopback only: 127.0.0.1
 ```
 
-Keep the state directory at mode `0700` and the store at `0600`. The store is the only database; there is no second store.
+Keep the state directory at mode `0700` and the store at `0600`. This file is the server's only database.
 
 - `GET /health` returns 200 `{"status":"ok"}` when the store answers, 503 otherwise.
 - `POST /mcp` (streamable HTTP) requires `Authorization: Bearer <shared token>`. Without a current token it returns 401.
@@ -47,8 +47,8 @@ The bot name is supplied by the caller and is not proven by the server. Any hold
 
 - `principal rotate shared-service` issues a new shared token and invalidates the old one. Update the MCP entry.
 - `principal revoke shared-service` disables the shared token.
-- `forget` and `maintain` run retention on demand. Nothing runs on a timer; schedule them with the owner's own tools.
+- `maintain` runs retention on demand. Nothing runs on a timer; schedule it with your own tools.
 
 ## Backup and restore
 
-Take a backup with the store's own backup command, keep it in an access-controlled volume, and check the restored store with `health` before serving it.
+Take a backup with `python -m recall_v2 --store "$store" backup --dir /absolute/private/backups`, keep it on an access-controlled volume, restore with `restore` to a new path, and check it with `doctor` before serving it. To bring a store from Recall 0.7 or earlier forward, run `migrate --from OLD --to NEW` once.
