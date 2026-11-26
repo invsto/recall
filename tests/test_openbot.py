@@ -46,7 +46,10 @@ class OpenBotTests(unittest.IsolatedAsyncioTestCase):
             timeout=15,
         )
         self.assertEqual(result.returncode, 0 if success else 1, result.stderr)
-        return json.loads(result.stdout if success else result.stderr)
+        # The deprecated `recall openbot` alias prints a warning line on stderr before the JSON.
+        stream = result.stdout if success else result.stderr
+        json_lines = [line for line in stream.splitlines() if line.startswith("{")]
+        return json.loads(json_lines[-1] if json_lines else stream)
 
     @contextlib.contextmanager
     def server(self, *, redact=()):
@@ -349,6 +352,27 @@ class OpenBotTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(current["checkpoint"]["summary"], "updated Cobalt checkpoint")
                 self.assertEqual(kinds(await self.tool(alpha, "project_search", query="cobalt")),
                                  {"checkpoint", "excerpt"})
+
+    async def test_shared_service_token_keeps_memory_separate_per_bot_name(self):
+        shared = self.cli("bot-add", "shared-service")["token"]
+        with self.server() as base:
+            async with self.client(base, shared) as service:
+                saved = await self.tool(service, "checkpoint_save", bot="alpha",
+                                        **self.checkpoint(summary="alpha shared-mode"))
+                self.assertTrue(saved["ok"])
+                other = await self.tool(service, "checkpoint_get", bot="beta", scope="task", key="restart")
+                self.assertIsNone(other["checkpoint"])
+                mine = await self.tool(service, "checkpoint_get", bot="alpha", scope="task", key="restart")
+                self.assertEqual(mine["checkpoint"]["summary"], "alpha shared-mode")
+                missing = await self.tool(service, "checkpoint_get", scope="task", key="restart")
+                self.assertEqual(missing["error"], "invalid_input")
+                invalid_name = await self.tool(service, "checkpoint_get", bot="bad name", scope="task", key="restart")
+                self.assertEqual(invalid_name["error"], "invalid_input")
+            async with self.client(base, self.alpha) as alpha:
+                refused = await self.tool(alpha, "checkpoint_get", bot="beta", scope="task", key="restart")
+                self.assertEqual(refused["error"], "invalid_input")
+                own = await self.tool(alpha, "checkpoint_get", scope="task", key="restart")
+                self.assertTrue(own["ok"])
 
     async def test_transport_and_tool_limits_do_not_log_inputs(self):
         synthetic = "placeholder-sensitive-input"

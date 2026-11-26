@@ -3,8 +3,8 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "recall"
-version = "0.6.0"
+name = "recallhq"
+version = "0.7.0"
 description = "A local knowledge base built from Claude Code, Codex, OpenCode, Pi, and ChatGPT conversations"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -42,6 +42,7 @@ recall = "recall:main"
 py-modules = ["recall"]
 packages = [
   "recall_core",
+  "recall_core.service",
   "recall_v2",
   "recall_v2.adapters",
   "recall_v2.api",

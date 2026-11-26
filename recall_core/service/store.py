@@ -263,11 +263,25 @@ class ServiceStore:
         return {"status": "ok"}
 
     def _principal(self, db, digest):
-        if digest is not None:
+        if isinstance(digest, str):
+            # The MCP layer resolved a bot name under the shared service credential.
+            row = db.execute("SELECT id FROM principals WHERE id = ?", (digest,)).fetchone()
+            if row is not None:
+                return row["id"]
+        elif digest is not None:
             row = db.execute("SELECT id FROM principals WHERE credential = ?", (digest,)).fetchone()
             if row is not None:
                 return row["id"]
         raise StoreError("unauthorized", "A current bot credential is required.")
+
+    def credential_principal(self, digest):
+        with self.transaction() as db:
+            row = db.execute("SELECT id FROM principals WHERE credential = ?", (digest,)).fetchone()
+        return row["id"] if row is not None else None
+
+    def ensure_bot(self, bot):
+        with self.transaction(write=True) as db:
+            db.execute("INSERT OR IGNORE INTO principals (id, credential) VALUES (?, NULL)", (bot,))
 
     def authorize(self, digest):
         with self.transaction() as db:
