@@ -25,7 +25,7 @@ decision, the spec number wins and the plan's decision is renumbered `D12` and u
 | Build plan | Decision | Mapped to | Status |
 | --- | --- | --- | --- |
 | D1 | Distribution name `recallhq` (command stays `recall`) | D12 | Accepted (owner); PyPI upload not approved |
-| D2 | Length of the `openbot` alias deprecation window: one minor release | D13 | Default in force |
+| D2 | Length of the `openbot` alias deprecation window: one minor release | D13 | Window closed: aliases removed in 0.8.0 | <!-- neutral-core: allow -->
 | D3 | Add the `note` item type: private only, 1 KiB | D14 | Default in force |
 | D4 | Token estimator `ceil(bytes/4)` | Superseded by spec D8 (`bytes3-v1`) | Not used |
 | D5 | Search results are references plus rank, no snippets | D15 | Default in force |

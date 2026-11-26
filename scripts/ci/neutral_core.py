@@ -1,6 +1,6 @@
 """Fail if platform, company, or product names leak into Recall's generic core.
 
-Scanned: recall_core/service/, recall_core/api.py (when present), README.md, and docs/.
+Scanned: recall_v2/, recall_core/api.py (when present), README.md, and docs/.
 Markdown link targets are ignored, so a link may point at an adapter path.
 A line tagged `neutral-core: allow` is skipped (used only for the deprecated alias).
 Adapters under recall_adapters/ are deliberately not scanned.
@@ -16,7 +16,7 @@ FORBIDDEN = ("openbot", "invsto", "sharksigma", "grok", "chartworks", "robinhood
 LINK_TARGET = re.compile(r"\]\([^)]*\)")
 ALLOW_MARKER = "neutral-core: allow"
 SCAN_FILES = ("recall_core/api.py", "README.md")
-SCAN_DIRS = (("recall_core/service", "*.py"), ("docs", "*.md"))
+SCAN_DIRS = (("recall_v2", "*.py"), ("docs", "*.md"))
 
 
 def scanned_files():

@@ -36,7 +36,7 @@ Run the Python test suite:
 python3 -m unittest -v
 ```
 
-Install `.[service]` to include the [service CLI and HTTP MCP integration tests](../recall_adapters/platforms/openbot/openbot.md#pilot-and-rollout) in local runs. GitHub CI installs this extra.
+Install `.[v2]` to include the MCP server tests and the [OpenBot runbook](../recall_adapters/platforms/openbot/openbot.md) in local runs. GitHub CI installs this extra. <!-- neutral-core: allow -->
 
 ## Retrieval evaluation
 
@@ -83,7 +83,7 @@ The `recall.py` module and CLI remain the compatibility facade. The data lifecyc
 - `recall_core.retrieval` owns query filters, fuzzy and regular-expression search, ranking, and match-preview formatting.
 - `recall_core.context_creation` is the canonical source-first creation engine: local session discovery/ranking, focus-aware structured generation, and bounded repository evidence collection.
 - `recall_core.context_policy` owns the versioned Markdown contract, section budgets, writing/update policy, and validation. New generation, CLI updates/edits/imports, and Pi saves use this policy. The Pi extension calls `context validate --input-file` with a private temporary JSON proposal; validation does not index, invoke a model, fetch links, or write contexts. New creation requires v2 (title/summary/actions first, compact evidence IDs, metadata footer). Updates preserve v1 and unmarked legacy layouts; no format is converted in place.
-- `recall_core.service.store` owns the service database, transactional authorization, revisions, and retention. `recall_core.service.mcp` adapts the official SDK to the authenticated bot tools. `recall_core.service.cli` supplies the trusted local operator interface.
+- `recall_v2.store` owns the store, transactional authorization, revisions, and retention. `recall_v2.mcp` adapts the official SDK to the memory tools and the shared-token `bot` argument. `recall_v2.cli` is the trusted local operator interface.
 
 The [editorial module](../recall_core/context_editorial.py) builds the shared Summary-review prompt and validates the model’s JSON response. It permits Summary-only edits, preserves supporting material and provenance, and fails closed on unresolved conflicts or invalid responses. `context editorial --input-file` only builds prompts or applies/validates a supplied response: it performs no model call, indexing, link fetching, or context save. CLI and Pi orchestration supply the same model and evidence before human approval.
 
