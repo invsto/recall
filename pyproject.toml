@@ -42,6 +42,7 @@ recall = "recall:main"
 py-modules = ["recall"]
 packages = [
   "recall_core",
+  "recall_core.service",
   "recall_v2",
   "recall_v2.adapters",
   "recall_v2.api",
