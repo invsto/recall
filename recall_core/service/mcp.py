@@ -122,7 +122,27 @@ def valid_content(operation, arguments):
     return True
 
 
+SHARED_PRINCIPAL = "shared-service"
+BOT_FIELD = {"type": "string", "pattern": r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+
+
+def resolve_call(store, digest, arguments):
+    """Under the shared service credential, the caller's `bot` names the memory namespace.
+    Under any other credential, `bot` is refused, so a bot's own token always means that bot."""
+    arguments = dict(arguments)
+    bot = arguments.pop("bot", None)
+    if digest is not None and store.credential_principal(digest) == SHARED_PRINCIPAL:
+        if bot is None:
+            raise StoreError("invalid_input", "The shared service needs a bot name on every call.")
+        store.ensure_bot(bot)
+        return bot, arguments
+    if bot is not None:
+        raise StoreError("invalid_input", "A bot name is accepted only with the shared service credential.")
+    return digest, arguments
+
+
 def invoke(store, operation, digest, arguments):
+    digest, arguments = resolve_call(store, digest, arguments)
     kind, _, action = operation.partition("_")
     if kind == "checkpoint" or operation == "project_search":
         return getattr(store, operation)(digest, **arguments)
@@ -226,3 +246,6 @@ def serve(store, host, port, allowed_hosts, allowed_origins):
     sdk_logger.propagate = False
     app = create_app(store, hosts, allowed_origins)
     uvicorn.run(app, host=host, port=port, access_log=False, proxy_headers=False, log_level="warning")
+
+for _name, (_description, _schema) in TOOL_SPECS.items():
+    _schema["properties"]["bot"] = BOT_FIELD
